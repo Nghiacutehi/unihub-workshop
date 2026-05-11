@@ -1,35 +1,3 @@
-# Đặc tả: Kiểm soát tải đột biến (rate_limit.md)
-
-## 1. Mô tả
-Tài liệu này quy định cơ chế bảo vệ hệ thống trước tình trạng quá tải lưu lượng (Traffic Saturation). Hệ thống phải đảm bảo khả năng tiếp nhận và xử lý ổn định cho 12.000 request trong thời gian ngắn, ngăn chặn việc cạn kiệt tài nguyên của Backend API và Database.
-
-## 2. Giải thuật xử lý
-Hệ thống triển khai thuật toán Token Bucket tại tầng API Gateway:
-- Mỗi định danh (MSSV hoặc IP) được cấp một xô (Bucket) chứa Token.
-- Request chỉ được phép đi tiếp nếu xô còn Token.
-- Token được nạp lại vào xô theo một tốc độ cố định (Refill Rate).
-
-## 3. Các bước xử lý
-1. API Gateway tiếp nhận Request và trích xuất định danh (JWT sub hoặc Client IP).
-2. Gateway gửi truy vấn tới Redis để kiểm tra số lượng Token còn lại trong xô của định danh đó.
-3. Nếu Token > 0:
-   - Trừ 1 Token trong Redis.
-   - Chuyển tiếp Request vào Backend Service.
-4. Nếu Token = 0:
-   - Từ chối Request ngay lập tức.
-   - Phản hồi mã lỗi HTTP 429.
-
-## 4. Kịch bản lỗi
-- Redis Connection Timeout: Trong trường hợp không thể kết nối tới Redis, Gateway sẽ chuyển sang chế độ Fail-open (cho phép request qua) hoặc áp dụng Local Rate Limit (giới hạn tại RAM của Gateway) để bảo vệ hệ thống ở mức tối thiểu.
-- Vượt ngưỡng (Rate Limit Exceeded): Trả về mã lỗi HTTP 429 kèm Header Retry-After để thông báo cho Client thời gian cần chờ.
-
-## 5. Ràng buộc
-- Thời gian xử lý kiểm tra tại Gateway không được vượt quá 50ms.
-- Dữ liệu bộ đếm trong Redis phải có thời gian hết hạn (TTL) để giải phóng bộ nhớ.
-
-## 6. Tiêu chí chấp nhận
-- Hệ thống duy trì trạng thái hoạt động (Availability) khi có 12.000 sinh viên truy cập đồng thời.
-- Không có hiện tượng sập dịch vụ (Cascading Failure) do quá tải request.
 
 
 

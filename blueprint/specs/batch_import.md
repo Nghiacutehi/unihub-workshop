@@ -1,7 +1,7 @@
 # Đặc tả: batch_import.md
 
 ## 1. Mô tả
-[cite_start]Tài liệu quy định luồng nghiệp vụ đồng bộ dữ liệu sinh viên từ hệ thống cũ vào `UniHub Workshop` thông qua tập tin `CSV` . [cite_start]Quy trình thực thi định kỳ vào ban đêm (Off-peak hours) để cập nhật danh sách sinh viên hợp lệ, phục vụ công tác xác thực và đăng ký workshop[cite: 40].
+Tài liệu quy định luồng nghiệp vụ đồng bộ dữ liệu sinh viên từ hệ thống cũ vào `UniHub Workshop` thông qua tập tin `CSV` .Quy trình thực thi định kỳ vào ban đêm (Off-peak hours) để cập nhật danh sách sinh viên hợp lệ, phục vụ công tác xác thực và đăng ký workshop.
 
 ## 2. Kiến trúc giải pháp
 Module áp dụng kiến trúc `Batch Sequential`. Dữ liệu được xử lý qua các giai đoạn nối tiếp, mỗi giai đoạn phải hoàn thành 100% trước khi chuyển sang giai đoạn kế tiếp:
@@ -14,7 +14,7 @@ Module áp dụng kiến trúc `Batch Sequential`. Dữ liệu được xử lý
 Quy trình thực thi gồm 4 giai đoạn cốt lõi:
 
 ### 3.1. Giai đoạn Extract (Trích xuất)
-1. [cite_start]`Background Worker` kiểm tra sự tồn tại của file `CSV` tại thư mục chỉ định[cite: 39].
+1. `Background Worker` kiểm tra sự tồn tại của file `CSV` tại thư mục chỉ định.
 2. Thực thi `File Validation`: Kiểm tra định dạng (Encoding), cấu trúc cột và dung lượng file.
 3. Đọc dữ liệu và `Bulk Insert` vào `Staging Table`.
 
@@ -37,7 +37,7 @@ Quy trình thực thi gồm 4 giai đoạn cốt lõi:
 
 | Loại lỗi | Giai đoạn | Hành vi hệ thống |
 | :--- | :--- | :--- |
-| `File Corrupted` | `Extract` | [cite_start]Ngừng tiến trình, bắn thông báo `Critical Error` tới `Organizer`, không tác động tới `Database`[cite: 55]. |
+| `File Corrupted` | `Extract` | Ngừng tiến trình, bắn thông báo `Critical Error` tới `Organizer`, không tác động tới `Database`. |
 | `Data Type Mismatch` | `Transform` | Bỏ qua dòng lỗi (`Skip`), ghi nhận vào `Error Log` kèm số dòng cụ thể, tiếp tục xử lý các dòng còn lại. |
 | `Database Deadlock` | `Load` | Thực hiện `Retry` giao dịch tối đa 3 lần. Nếu vẫn thất bại, thực hiện `Rollback Chunk` hiện tại và tiếp tục `Chunk` tiếp theo. |
 
@@ -47,5 +47,5 @@ Quy trình thực thi gồm 4 giai đoạn cốt lõi:
 * `Logging`: Bắt buộc ghi lại `Tracking ID` cho mỗi đợt `Import` để có thể truy vết nguồn gốc dữ liệu khi xảy ra khiếu nại về thông tin sinh viên.
 
 ## 6. Tiêu chí chấp nhận
-* [cite_start]Toàn bộ sinh viên mới có trong file `CSV` phải đăng nhập được vào hệ thống sau khi quá trình `Import` kết thúc[cite: 40].
-* [cite_start]Không làm ảnh hưởng đến hiệu năng của các `API` xem workshop đang chạy đồng thời (Graceful Execution)[cite: 55].
+* Toàn bộ sinh viên mới có trong file `CSV` phải đăng nhập được vào hệ thống sau khi quá trình `Import` kết thúc.
+* Không làm ảnh hưởng đến hiệu năng của các `API` xem workshop đang chạy đồng thời (Graceful Execution).
