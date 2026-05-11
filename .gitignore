@@ -1,0 +1,14 @@
+# Microsoft Office temporary files
+~$*.docx
+~$*.doc
+~$*.xlsx
+~$*.xls
+~$*.pptx
+~$*.ppt
+
+# Temporary files
+*.tmp
+
+# Ignore specific personal project documents
+context project môn học.docx
+context project môn học.pdf
