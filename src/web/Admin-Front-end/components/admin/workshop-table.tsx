@@ -1,0 +1,240 @@
+"use client"
+
+import { useState } from "react"
+import { Pencil, Trash2, ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { cn } from "@/lib/utils"
+
+export interface Workshop {
+  id: string
+  title: string
+  speaker: string
+  datetime: string
+  capacity: number
+  registered: number
+  price: number
+  status: "open" | "cancelled" | "completed"
+}
+
+interface WorkshopTableProps {
+  workshops: Workshop[]
+  onEdit?: (workshop: Workshop) => void
+  onDelete?: (workshop: Workshop) => void
+}
+
+const statusConfig = {
+  open: {
+    label: "Đang mở",
+    className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  },
+  cancelled: {
+    label: "Đã hủy",
+    className: "bg-rose-50 text-rose-700 border-rose-200",
+  },
+  completed: {
+    label: "Đã xong",
+    className: "bg-slate-100 text-slate-600 border-slate-200",
+  },
+}
+
+export function WorkshopTable({ workshops, onEdit, onDelete }: WorkshopTableProps) {
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 10
+  const totalPages = Math.ceil(workshops.length / itemsPerPage)
+
+  const paginatedWorkshops = workshops.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
+
+  const formatPrice = (price: number) => {
+    if (price === 0) return "Miễn phí"
+    return new Intl.NumberFormat("vi-VN", {
+      style: "currency",
+      currency: "VND",
+    }).format(price)
+  }
+
+  const formatDate = (datetime: string) => {
+    const date = new Date(datetime)
+    return new Intl.DateTimeFormat("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date)
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="w-[300px] text-sm font-semibold text-slate-700">
+              Tiêu đề
+            </TableHead>
+            <TableHead className="text-sm font-semibold text-slate-700">
+              Diễn giả
+            </TableHead>
+            <TableHead className="text-sm font-semibold text-slate-700">
+              Thời gian
+            </TableHead>
+            <TableHead className="text-sm font-semibold text-slate-700">
+              Số chỗ
+            </TableHead>
+            <TableHead className="text-sm font-semibold text-slate-700">
+              Giá vé
+            </TableHead>
+            <TableHead className="text-sm font-semibold text-slate-700">
+              Trạng thái
+            </TableHead>
+            <TableHead className="w-[100px] text-right text-sm font-semibold text-slate-700">
+              Hành động
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {paginatedWorkshops.map((workshop) => {
+            const status = statusConfig[workshop.status]
+            const fillPercentage = (workshop.registered / workshop.capacity) * 100
+
+            return (
+              <TableRow key={workshop.id} className="group">
+                <TableCell className="font-medium text-slate-800">
+                  {workshop.title}
+                </TableCell>
+                <TableCell className="text-slate-600">{workshop.speaker}</TableCell>
+                <TableCell className="text-slate-600">
+                  {formatDate(workshop.datetime)}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all",
+                          fillPercentage >= 90
+                            ? "bg-amber-500"
+                            : fillPercentage >= 70
+                            ? "bg-emerald-500"
+                            : "bg-indigo-500"
+                        )}
+                        style={{ width: `${fillPercentage}%` }}
+                      />
+                    </div>
+                    <span className="text-sm text-slate-600">
+                      {workshop.registered}/{workshop.capacity}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-slate-600">
+                  {formatPrice(workshop.price)}
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-medium",
+                      status.className
+                    )}
+                  >
+                    {status.label}
+                  </span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 opacity-0 group-hover:opacity-100"
+                      >
+                        <MoreHorizontal className="h-4 w-4 text-slate-500" />
+                        <span className="sr-only">Mở menu</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={() => onEdit?.(workshop)}
+                        className="cursor-pointer"
+                      >
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Chỉnh sửa
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => onDelete?.(workshop)}
+                        className="cursor-pointer text-rose-600 focus:text-rose-600"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Xóa
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3">
+          <p className="text-sm text-slate-600">
+            Hiển thị {(currentPage - 1) * itemsPerPage + 1} -{" "}
+            {Math.min(currentPage * itemsPerPage, workshops.length)} trong tổng số{" "}
+            {workshops.length} workshop
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="h-8"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+              <Button
+                key={page}
+                variant={currentPage === page ? "default" : "outline"}
+                size="sm"
+                onClick={() => setCurrentPage(page)}
+                className={cn(
+                  "h-8 w-8",
+                  currentPage === page && "bg-indigo-700 hover:bg-indigo-800"
+                )}
+              >
+                {page}
+              </Button>
+            ))}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="h-8"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
