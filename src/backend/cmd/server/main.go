@@ -1,0 +1,347 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+
+	"unihub-workshop/internal/config"
+	"unihub-workshop/internal/database"
+	"unihub-workshop/internal/handler"
+	"unihub-workshop/internal/middleware"
+	"unihub-workshop/internal/model"
+	"unihub-workshop/internal/queue"
+	"unihub-workshop/internal/ratelimiter"
+	"unihub-workshop/internal/repository"
+	"unihub-workshop/internal/service"
+)
+
+func main() {
+	// Load config
+	cfg := config.Load()
+
+	// Initialize infrastructure
+	pgPool := database.NewPostgresPool(cfg)
+	defer pgPool.Close()
+
+	redisClient := database.NewRedisClient(cfg)
+	defer redisClient.Close()
+
+	publisher, err := queue.NewPublisher(cfg.RabbitMQURL)
+	if err != nil {
+		log.Fatalf("Failed to create publisher: %v", err)
+	}
+	defer publisher.Close()
+
+	consumer, err := queue.NewConsumer(cfg.RabbitMQURL)
+	if err != nil {
+		log.Fatalf("Failed to create consumer: %v", err)
+	}
+	defer consumer.Close()
+
+	// Initialize repositories
+	userRepo := repository.NewUserRepo(pgPool)
+	workshopRepo := repository.NewWorkshopRepo(pgPool)
+	regRepo := repository.NewRegistrationRepo(pgPool)
+	paymentRepo := repository.NewPaymentRepo(pgPool)
+	notifRepo := repository.NewNotificationRepo(pgPool)
+	importRepo := repository.NewImportRepo(pgPool)
+
+	// Initialize waiting room (max 100 concurrent registrations, token valid for 5 min, queue valid for 1 hour)
+	waitingRoom := ratelimiter.NewWaitingRoom(redisClient, 100, 300, 3600)
+
+	// Initialize services
+	authService := service.NewAuthService(userRepo, cfg.AuthSecret)
+	workshopService := service.NewWorkshopService(workshopRepo)
+	regService := service.NewRegistrationService(regRepo, workshopRepo, publisher, redisClient, waitingRoom)
+	paymentService := service.NewPaymentService(paymentRepo, regRepo, workshopRepo, publisher, redisClient, cfg.PaymentWebhookSecret, cfg.PaymentGatewayURL)
+	checkinService := service.NewCheckinService(regRepo)
+
+	// Notification strategies (Strategy + Observer Pattern)
+	emailStrategy := service.NewEmailStrategy(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom, userRepo)
+	webStrategy := service.NewWebNotificationStrategy()
+	notifService := service.NewNotificationService(notifRepo, emailStrategy, webStrategy)
+
+	batchService := service.NewBatchImportService(importRepo, userRepo, cfg.CSVImportDir, cfg.CSVArchiveDir)
+	aiService := service.NewAISummaryService(workshopRepo, cfg.AIApiURL, cfg.AIApiKey)
+
+	// Initialize handlers
+	authHandler := handler.NewAuthHandler(authService)
+	workshopHandler := handler.NewWorkshopHandler(workshopService)
+	regHandler := handler.NewRegistrationHandler(regService)
+	paymentHandler := handler.NewPaymentHandler(paymentService)
+	checkinHandler := handler.NewCheckinHandler(checkinService)
+	notifHandler := handler.NewNotificationHandler(notifService)
+	adminHandler := handler.NewAdminHandler(batchService, aiService, userRepo, cfg.CSVImportDir)
+
+	// Initialize rate limiter
+	redisBucket := ratelimiter.NewRedisTokenBucket(redisClient, cfg.RateLimitCapacity, cfg.RateLimitRefillRate, cfg.RateLimitTTL)
+	localBucket := ratelimiter.NewLocalBucket(cfg.RateLimitCapacity, cfg.RateLimitRefillRate, 10000)
+	rateLimitMW := middleware.NewRateLimitMiddleware(redisBucket, localBucket)
+
+	// Build router
+	r := chi.NewRouter()
+
+	// Global middleware
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
+	r.Use(chimw.RealIP)
+	r.Use(chimw.Timeout(30 * time.Second))
+	r.Use(middleware.CORSMiddleware(cfg.CORSOrigins))
+
+	// Health check
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "time": time.Now().Format(time.RFC3339)})
+	})
+
+	// Public routes
+	r.Post("/api/v1/auth/login", authHandler.Login)
+
+	// Payment webhook (public, signature-verified)
+	r.Post("/api/v1/payment/webhook", paymentHandler.Webhook)
+
+	// Mock payment endpoint for testing
+	r.Get("/mock/payment/checkout", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(model.APIResponse{
+			Success: true,
+			Message: "Mock payment page - use webhook to simulate payment result",
+			Data: map[string]string{
+				"transaction_id": r.URL.Query().Get("tx"),
+				"instruction":    "POST to /api/v1/payment/webhook with transaction_id, status, and signature",
+			},
+		})
+	})
+
+	// Public workshop listing (no auth needed for browsing)
+	r.Get("/api/v1/workshops", workshopHandler.List)
+	r.Get("/api/v1/workshops/{id}", workshopHandler.GetByID)
+
+	// Authenticated routes
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AuthMiddleware(cfg.AuthSecret))
+		r.Use(rateLimitMW.Handler)
+
+		// User profile
+		r.Get("/api/v1/auth/me", authHandler.GetMe)
+
+		// Notifications (all authenticated users)
+		r.Get("/api/v1/notifications", notifHandler.GetMyNotifications)
+
+		// Student routes
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireRole(model.RoleStudent, model.RoleOrganizer))
+
+			r.Post("/api/v1/registrations", regHandler.Register)
+			r.Get("/api/v1/registrations/waiting-room/{workshopId}", regHandler.GetWaitingRoomStatus)
+			r.Get("/api/v1/registrations/status/{correlationId}", regHandler.GetStatus)
+			r.Get("/api/v1/registrations/my", regHandler.MyRegistrations)
+			r.Post("/api/v1/payments/{registrationId}", paymentHandler.InitiatePayment)
+		})
+
+		// Staff routes (check-in)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireRole(model.RoleStaff, model.RoleOrganizer))
+
+			r.Post("/api/v1/checkin/live", checkinHandler.LiveCheckin)
+			r.Post("/api/v1/checkin/sync", checkinHandler.BulkSync)
+		})
+
+		// Organizer (admin) routes
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireRole(model.RoleOrganizer))
+
+			r.Post("/api/v1/workshops", workshopHandler.Create)
+			r.Put("/api/v1/workshops/{id}", workshopHandler.Update)
+			r.Delete("/api/v1/workshops/{id}", workshopHandler.Delete)
+
+			r.Post("/api/v1/admin/import/csv", adminHandler.UploadCSV)
+			r.Get("/api/v1/admin/import/jobs", adminHandler.GetImportJobs)
+			r.Post("/api/v1/admin/workshops/{workshopId}/summary", adminHandler.UploadPDF)
+			r.Get("/api/v1/admin/stats", adminHandler.GetStats)
+			r.Get("/api/v1/admin/payment/circuit-breaker", paymentHandler.GetCircuitBreakerStatus)
+		})
+	})
+
+	// Start background workers
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Registration worker (consumes from RabbitMQ)
+	go startRegistrationWorker(ctx, consumer, regService)
+
+	// Notification worker
+	go startNotificationWorker(ctx, cfg.RabbitMQURL, notifService)
+
+	// Payment cleanup worker (runs every 5 minutes)
+	go startPaymentCleanupWorker(ctx, paymentService)
+
+	// Batch import scheduler (runs at 2:00 AM daily)
+	go startBatchImportScheduler(ctx, batchService)
+
+	// Start server
+	srv := &http.Server{
+		Addr:         ":" + cfg.ServerPort,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Graceful shutdown
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+
+		log.Println("[SERVER] Shutting down gracefully...")
+		cancel()
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("[SERVER] Forced shutdown: %v", err)
+		}
+	}()
+
+	log.Printf("[SERVER] Starting on port %s", cfg.ServerPort)
+	log.Printf("[SERVER] API docs: http://localhost:%s/health", cfg.ServerPort)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("[SERVER] Failed to start: %v", err)
+	}
+	log.Println("[SERVER] Stopped")
+}
+
+// Background workers
+
+func startRegistrationWorker(ctx context.Context, consumer *queue.Consumer, regService *service.RegistrationService) {
+	msgs, err := consumer.Consume(queue.RegistrationQueue)
+	if err != nil {
+		log.Fatalf("[WORKER] Failed to start registration consumer: %v", err)
+	}
+
+	log.Println("[WORKER] Registration worker started")
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("[WORKER] Registration worker stopping")
+			return
+		case msg, ok := <-msgs:
+			if !ok {
+				return
+			}
+
+			var queueMsg model.QueueMessage
+			if err := json.Unmarshal(msg.Body, &queueMsg); err != nil {
+				log.Printf("[WORKER] Failed to unmarshal message: %v", err)
+				msg.Nack(false, false) // Send to DLQ
+				continue
+			}
+
+			if err := regService.ProcessRegistration(ctx, queueMsg); err != nil {
+				log.Printf("[WORKER] Processing failed: %v", err)
+				// Retry up to 3 times
+				retryCount := 0
+				if msg.Headers != nil {
+					if rc, ok := msg.Headers["x-retry-count"].(int64); ok {
+						retryCount = int(rc)
+					}
+				}
+				if retryCount < 3 {
+					msg.Nack(false, true) // Requeue
+				} else {
+					msg.Nack(false, false) // Send to DLQ
+				}
+				continue
+			}
+
+			msg.Ack(false)
+		}
+	}
+}
+
+func startNotificationWorker(ctx context.Context, rabbitURL string, notifService *service.NotificationService) {
+	notifConsumer, err := queue.NewConsumer(rabbitURL)
+	if err != nil {
+		log.Printf("[WORKER] Failed to start notification consumer: %v", err)
+		return
+	}
+	defer notifConsumer.Close()
+
+	msgs, err := notifConsumer.Consume(queue.NotificationQueue)
+	if err != nil {
+		log.Printf("[WORKER] Failed to consume notifications: %v", err)
+		return
+	}
+
+	log.Println("[WORKER] Notification worker started")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-msgs:
+			if !ok {
+				return
+			}
+
+			var event model.NotificationEvent
+			if err := json.Unmarshal(msg.Body, &event); err != nil {
+				log.Printf("[WORKER] Failed to unmarshal notification: %v", err)
+				msg.Nack(false, false)
+				continue
+			}
+
+			notifService.Dispatch(ctx, event)
+			msg.Ack(false)
+		}
+	}
+}
+
+func startPaymentCleanupWorker(ctx context.Context, paymentService *service.PaymentService) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	log.Println("[WORKER] Payment cleanup worker started (interval: 5min)")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			paymentService.CleanupExpiredPayments(ctx)
+		}
+	}
+}
+
+func startBatchImportScheduler(ctx context.Context, batchService *service.BatchImportService) {
+	log.Println("[WORKER] Batch import scheduler started (daily at 02:00)")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day()+1, 2, 0, 0, 0, now.Location())
+			duration := next.Sub(now)
+
+			timer := time.NewTimer(duration)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				log.Println("[BATCH_IMPORT] Scheduled import triggered")
+				batchService.ScanAndImport(ctx)
+			}
+		}
+	}
+}
