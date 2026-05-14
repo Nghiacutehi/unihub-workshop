@@ -4,122 +4,121 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ==========================================
 -- BẢNG 1: USERS (Người dùng hệ thống)
 -- ==========================================
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    student_id VARCHAR(20) UNIQUE NOT NULL, 
-    password_hash VARCHAR(255) NOT NULL,
-    full_name VARCHAR(100) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    phone VARCHAR(20),
-    role VARCHAR(20) NOT NULL DEFAULT 'STUDENT', 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE public.users (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id character varying NOT NULL UNIQUE, -- MSSV hoặc ID nhân sự
+  password_hash character varying NOT NULL,
+  full_name character varying NOT NULL,
+  email character varying NOT NULL UNIQUE,
+  phone character varying,
+  role character varying NOT NULL DEFAULT 'STUDENT'::character varying,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT users_pkey PRIMARY KEY (id)
 );
 
--- Index tăng tốc truy vấn đăng nhập và import CSV
-CREATE INDEX idx_users_student_id ON users(student_id);
+-- Index tăng tốc truy vấn
+CREATE INDEX idx_users_user_id ON users(user_id);
 
 -- ==========================================
 -- BẢNG 2: WORKSHOPS (Thông tin sự kiện)
 -- ==========================================
-CREATE TABLE workshops (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    speaker TEXT NOT NULL, 
-    room VARCHAR(50) NOT NULL,
-    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
-    end_time TIMESTAMP WITH TIME ZONE NOT NULL,
-    capacity INT NOT NULL CHECK (capacity > 0),
-    available_seats INT NOT NULL,
-    price DECIMAL(10, 2) NOT NULL DEFAULT 0.00, 
-    summary TEXT, 
-    status VARCHAR(20) NOT NULL DEFAULT 'PUBLISHED',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Chống cháy: Không bao giờ cho phép ghế rớt xuống số âm
-    CONSTRAINT chk_positive_seats CHECK (available_seats >= 0 AND available_seats <= capacity)
+CREATE TABLE public.workshops (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  title character varying NOT NULL,
+  description text,
+  speaker text,
+  room character varying NOT NULL,
+  start_time timestamp with time zone NOT NULL,
+  end_time timestamp with time zone NOT NULL,
+  capacity integer NOT NULL CHECK (capacity > 0),
+  available_seats integer NOT NULL,
+  price numeric NOT NULL DEFAULT 0.00,
+  summary text,
+  status character varying NOT NULL DEFAULT 'PUBLISHED'::character varying,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT workshops_pkey PRIMARY KEY (id)
 );
 
 -- ==========================================
 -- BẢNG 3: REGISTRATIONS (Vé đăng ký)
 -- ==========================================
-CREATE TABLE registrations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    workshop_id UUID NOT NULL REFERENCES workshops(id) ON DELETE CASCADE,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING_PAYMENT', 
-    qr_code TEXT, 
-    is_checked_in BOOLEAN NOT NULL DEFAULT FALSE,
-    scanned_at TIMESTAMP WITH TIME ZONE, 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Chống spam: 1 user chỉ đăng ký 1 workshop 1 lần
-    CONSTRAINT uq_user_workshop UNIQUE (user_id, workshop_id)
+CREATE TABLE public.registrations (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  workshop_id uuid NOT NULL,
+  status character varying NOT NULL DEFAULT 'PENDING_PAYMENT'::character varying,
+  ticket_signature text, -- Chữ ký số dùng để vẽ QR
+  is_checked_in boolean NOT NULL DEFAULT false,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  payment_transaction_id character varying,
+  CONSTRAINT registrations_pkey PRIMARY KEY (id),
+  CONSTRAINT registrations_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  CONSTRAINT registrations_workshop_id_fkey FOREIGN KEY (workshop_id) REFERENCES public.workshops(id) ON DELETE CASCADE,
+  CONSTRAINT uq_user_workshop UNIQUE (user_id, workshop_id)
 );
-
--- Index tối ưu truy xuất lịch sử đăng ký
-CREATE INDEX idx_registrations_user ON registrations(user_id);
-CREATE INDEX idx_registrations_workshop ON registrations(workshop_id);
 
 -- ==========================================
 -- BẢNG 4: PAYMENTS (Giao dịch thanh toán)
 -- ==========================================
-CREATE TABLE payments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    registration_id UUID NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
-    transaction_id VARCHAR(100) UNIQUE NOT NULL, 
-    amount DECIMAL(10, 2) NOT NULL, 
-    provider VARCHAR(50) NOT NULL, 
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING', 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE public.payments (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  registration_id uuid NOT NULL,
+  transaction_id character varying NOT NULL UNIQUE,
+  amount numeric NOT NULL,
+  provider character varying NOT NULL,
+  status character varying NOT NULL DEFAULT 'PENDING'::character varying,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT payments_pkey PRIMARY KEY (id),
+  CONSTRAINT payments_registration_id_fkey FOREIGN KEY (registration_id) REFERENCES public.registrations(id) ON DELETE CASCADE
 );
 
 -- ==========================================
--- BẢNG 5: NOTIFICATIONS (Lịch sử thông báo)
+-- BẢNG 5: NOTIFICATIONS (Thông báo)
 -- ==========================================
-CREATE TABLE notifications (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    registration_id UUID REFERENCES registrations(id) ON DELETE SET NULL,
-    channel VARCHAR(20) NOT NULL, 
-    title VARCHAR(255) NOT NULL,
-    content TEXT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING', 
-    event_id VARCHAR(100) NOT NULL, 
-    error_message TEXT, 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    sent_at TIMESTAMP WITH TIME ZONE,
-    
-    -- Chống gửi trùng lặp thông báo
-    CONSTRAINT uq_event_channel UNIQUE (event_id, channel)
-);
-
--- Index tối ưu truy vấn cho icon cái chuông
-CREATE INDEX idx_notifications_user ON notifications(user_id);
-
--- ==========================================
--- BẢNG 6: IMPORT_JOBS (Lịch sử các đợt chạy Batch Import)
--- ==========================================
-CREATE TABLE import_jobs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    file_name VARCHAR(255) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'PROCESSING', 
-    total_records INT DEFAULT 0,
-    success_count INT DEFAULT 0,
-    error_count INT DEFAULT 0,
-    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP WITH TIME ZONE
+CREATE TABLE public.notifications (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  registration_id uuid,
+  channel character varying NOT NULL,
+  title character varying NOT NULL,
+  content text NOT NULL,
+  status character varying NOT NULL DEFAULT 'PENDING'::character varying,
+  event_id character varying NOT NULL,
+  error_message text,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  sent_at timestamp with time zone,
+  CONSTRAINT notifications_pkey PRIMARY KEY (id),
+  CONSTRAINT notifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE,
+  CONSTRAINT notifications_registration_id_fkey FOREIGN KEY (registration_id) REFERENCES public.registrations(id) ON DELETE SET NULL
 );
 
 -- ==========================================
--- BẢNG 7: IMPORT_ERRORS (Chi tiết các dòng CSV bị lỗi)
+-- BẢNG 6: IMPORT_JOBS (Lịch sử Import)
 -- ==========================================
-CREATE TABLE import_errors (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    job_id UUID NOT NULL REFERENCES import_jobs(id) ON DELETE CASCADE,
-    row_number INT NOT NULL, 
-    raw_data TEXT, 
-    error_reason TEXT NOT NULL, 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE public.import_jobs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  file_name character varying NOT NULL,
+  status character varying NOT NULL DEFAULT 'PROCESSING'::character varying,
+  total_records integer DEFAULT 0,
+  success_count integer DEFAULT 0,
+  error_count integer DEFAULT 0,
+  started_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  completed_at timestamp with time zone,
+  CONSTRAINT import_jobs_pkey PRIMARY KEY (id)
+);
+
+-- ==========================================
+-- BẢNG 7: IMPORT_ERRORS (Lỗi Import)
+-- ==========================================
+CREATE TABLE public.import_errors (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  job_id uuid NOT NULL,
+  row_number integer NOT NULL,
+  raw_data text,
+  error_reason text NOT NULL,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT import_errors_pkey PRIMARY KEY (id),
+  CONSTRAINT import_errors_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.import_jobs(id) ON DELETE CASCADE
 );

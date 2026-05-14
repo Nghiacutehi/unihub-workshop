@@ -1,3 +1,42 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Next.js
+.next/
+out/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Production
+build/
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files
+.env*.local
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
 # Microsoft Office temporary files
 ~$*.docx
 ~$*.doc
@@ -9,6 +48,12 @@
 # Temporary files
 *.tmp
 
-# Ignore specific personal project documents
-context project môn học.docx
-context project môn học.pdf
+# Ignore all documents
+*.docx
+*.pdf
+*.doc
+
+# SQLite
+*.db
+*.db-journal
+*.sqlite
