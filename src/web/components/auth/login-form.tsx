@@ -2,19 +2,39 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Eye, EyeOff, Mail, Lock } from 'lucide-react'
+import { Eye, EyeOff, User, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase'
+import { api, auth, APIError } from '@/lib/api-client'
+
+/**
+ * LoginForm — Đăng nhập qua Go Backend API.
+ *
+ * Luồng: POST /api/v1/auth/login → nhận { token, user } → lưu cookie → redirect
+ * Seed data: student_id = "21127001", password = "password123"
+ *
+ * Tuân thủ: agent.md mục 10.4 (Auth), ui_web.md mục 3.1
+ */
+
+type LoginResponse = {
+  token: string
+  user: {
+    id: string
+    studentId: string
+    fullName: string
+    email: string
+    role: string
+  }
+}
 
 export function LoginForm() {
   const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState({
-    email: '',
+    studentId: '',
     password: '',
     rememberMe: false,
   })
@@ -22,46 +42,47 @@ export function LoginForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-    
+
     try {
-      // 1. Truy vấn bảng users bằng email HOẶC user_id (MSSV)
-      const { data: user, error } = await supabase
-        .from('users')
-        .select('id, user_id, password_hash, full_name, email, role')
-        .or(`email.eq.${formData.email},user_id.eq.${formData.email}`)
-        .single()
+      // Gọi Go Backend — POST /api/v1/auth/login
+      // Body dùng snake_case vì gửi trực tiếp lên Go
+      const response = await api.post<LoginResponse>('/api/v1/auth/login', {
+        student_id: formData.studentId,
+        password: formData.password,
+      })
 
-      if (error || !user) {
-        throw new Error('Tài khoản không tồn tại trong hệ thống')
+      if (!response.data) {
+        throw new Error('Phản hồi từ server không hợp lệ')
       }
 
-      // 2. So sánh mật khẩu (Plaintext cho dev, sau này dùng bcrypt)
-      if (user.password_hash !== formData.password) {
-        throw new Error('Mật khẩu không chính xác')
-      }
+      const { token, user } = response.data
 
-      // 3. Lưu session vào Cookie để Middleware và Client đọc được
-      const sessionData = {
+      // Lưu JWT token và session vào cookie
+      auth.setSession(token, {
         id: user.id,
-        user_id: user.user_id,
-        full_name: user.full_name,
+        studentId: user.studentId,
+        fullName: user.fullName,
         email: user.email,
         role: user.role,
-      }
-      
-      const cookieValue = encodeURIComponent(JSON.stringify(sessionData))
-      document.cookie = `unihub_session=${cookieValue}; path=/; max-age=3600; SameSite=Lax`
+      })
 
-      toast.success(`Chào mừng ${user.full_name}!`)
+      toast.success(`Chào mừng ${user.fullName}!`)
 
-      // 4. Chuyển hướng chuẩn xác theo Role từ Database
-      if (user.role === 'ADMIN' || user.role === 'STAFF') {
+      // Chuyển hướng theo Role từ Go Backend
+      // Go Backend dùng: ORGANIZER, STAFF, STUDENT
+      if (user.role === 'ORGANIZER') {
         router.push('/admin')
       } else {
         router.push('/')
       }
-    } catch (error: any) {
-      toast.error(error.message || 'Đăng nhập thất bại')
+    } catch (error) {
+      if (error instanceof APIError) {
+        toast.error(error.message || 'Đăng nhập thất bại')
+      } else if (error instanceof Error) {
+        toast.error(error.message)
+      } else {
+        toast.error('Đã xảy ra lỗi không xác định')
+      }
     } finally {
       setIsLoading(false)
     }
@@ -77,19 +98,19 @@ export function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="w-full space-y-6">
-      {/* Email Field */}
+      {/* Student ID Field */}
       <div className="space-y-2">
-        <label htmlFor="email" className="text-sm font-medium text-foreground">
-          Email hoặc Mã sinh viên
+        <label htmlFor="studentId" className="text-sm font-medium text-foreground">
+          Mã sinh viên
         </label>
         <div className="relative">
-          <Mail className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+          <User className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            id="email"
-            name="email"
-            type="email"
-            placeholder="Nhập email hoặc mã sinh viên"
-            value={formData.email}
+            id="studentId"
+            name="studentId"
+            type="text"
+            placeholder="Nhập mã sinh viên (VD: 21127001)"
+            value={formData.studentId}
             onChange={handleChange}
             className="pl-10 h-11 bg-background border-input"
             required

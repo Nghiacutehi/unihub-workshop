@@ -1,43 +1,63 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
 /**
- * Middleware bảo vệ route — đọc session từ Cookie (không phụ thuộc Supabase Auth).
- * Logic phân quyền tuân thủ auth.md mục 3.2.
+ * Middleware bảo vệ route — đọc session từ Cookie.
+ *
+ * Role mapping (từ Go Backend):
+ * - ORGANIZER → truy cập /admin
+ * - STAFF     → truy cập /admin (chỉ check-in)
+ * - STUDENT   → truy cập / (Student Portal)
+ *
+ * Tuân thủ: auth.md mục 3.2, agent.md mục 10.4
  */
 export function middleware(request: NextRequest) {
   const sessionCookie = request.cookies.get('unihub_session')?.value
+  const tokenCookie = request.cookies.get('unihub_token')?.value
   const pathname = request.nextUrl.pathname
 
-  // 1. Chưa đăng nhập + không phải trang login + không phải API -> chuyển về login
-  if (!sessionCookie && !pathname.startsWith('/login') && !pathname.startsWith('/api')) {
+  // Các route public không cần kiểm tra auth
+  const isPublicRoute =
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/api') ||
+    pathname.startsWith('/_next') ||
+    pathname === '/favicon.ico'
+
+  // 1. Route công khai — cho đi qua
+  if (isPublicRoute) {
+    // Nếu đã đăng nhập mà đang ở trang login → redirect về trang chủ
+    if (sessionCookie && pathname.startsWith('/login')) {
+      try {
+        const user = JSON.parse(decodeURIComponent(sessionCookie))
+        const dest = user.role === 'ORGANIZER' || user.role === 'STAFF' ? '/admin' : '/'
+        return NextResponse.redirect(new URL(dest, request.url))
+      } catch {
+        // Cookie hỏng → xóa và cho vào login
+        const res = NextResponse.redirect(new URL('/login', request.url))
+        res.cookies.delete('unihub_session')
+        res.cookies.delete('unihub_token')
+        return res
+      }
+    }
+    return NextResponse.next()
+  }
+
+  // 2. Chưa đăng nhập → chuyển về login
+  if (!sessionCookie || !tokenCookie) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // 2. Đã đăng nhập + đang ở trang login -> chuyển về trang chủ theo role
-  if (sessionCookie && pathname.startsWith('/login')) {
+  // 3. Bảo vệ /admin — chỉ ORGANIZER hoặc STAFF mới vào được
+  if (pathname.startsWith('/admin')) {
     try {
       const user = JSON.parse(decodeURIComponent(sessionCookie))
-      const isAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
-      const dest = isAdmin ? '/admin' : '/'
-      return NextResponse.redirect(new URL(dest, request.url))
-    } catch {
-      // Cookie hỏng -> xóa và cho vào login
-      const res = NextResponse.redirect(new URL('/login', request.url))
-      res.cookies.delete('unihub_session')
-      return res
-    }
-  }
-
-  // 3. Bảo vệ /admin — chỉ ADMIN hoặc STAFF mới vào được
-  if (sessionCookie && pathname.startsWith('/admin')) {
-    try {
-      const user = JSON.parse(decodeURIComponent(sessionCookie))
-      const isAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
-      if (!isAdmin) {
+      if (user.role !== 'ORGANIZER' && user.role !== 'STAFF') {
         return NextResponse.redirect(new URL('/', request.url))
       }
     } catch {
-      return NextResponse.redirect(new URL('/login', request.url))
+      const res = NextResponse.redirect(new URL('/login', request.url))
+      res.cookies.delete('unihub_session')
+      res.cookies.delete('unihub_token')
+      return res
     }
   }
 
