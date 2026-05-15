@@ -1,10 +1,11 @@
 "use client"
 
-import { Bell, LogOut } from "lucide-react"
+import { Bell, LogOut, User } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { NotificationBell } from "./notification-bell"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,23 +39,13 @@ export function Navbar() {
 
         {/* Right Actions */}
         <div className="flex items-center gap-2">
-          {/* Notification Bell */}
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5 text-muted-foreground" />
-            <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive" />
-            <span className="sr-only">Thông báo</span>
-          </Button>
+          <NotificationBell />
 
           {/* User Avatar Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="relative h-9 w-9 rounded-full">
-                <Avatar className="h-9 w-9">
-                  <AvatarImage src="/avatar-placeholder.png" alt="Ảnh đại diện" />
-                  <AvatarFallback className="bg-primary/10 text-primary">
-                    SV
-                  </AvatarFallback>
-                </Avatar>
+              <Button variant="ghost" className="relative h-9 w-9 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors">
+                <User className="h-5 w-5 text-slate-600" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">

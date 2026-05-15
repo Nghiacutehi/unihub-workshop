@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Pencil, Trash2, ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
+import { Pencil, Trash2, ChevronLeft, ChevronRight, MoreHorizontal, QrCode } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -38,17 +38,17 @@ interface WorkshopTableProps {
 }
 
 const statusConfig = {
-  open: {
+  PUBLISHED: {
     label: "Đang mở",
     className: "bg-emerald-50 text-emerald-700 border-emerald-200",
   },
-  cancelled: {
-    label: "Đã hủy",
-    className: "bg-rose-50 text-rose-700 border-rose-200",
+  CLOSED: {
+    label: "Đã đóng",
+    className: "bg-amber-50 text-amber-700 border-amber-200",
   },
-  completed: {
-    label: "Đã xong",
-    className: "bg-slate-100 text-slate-600 border-slate-200",
+  DELETED: {
+    label: "Đã xóa",
+    className: "bg-rose-50 text-rose-700 border-rose-200",
   },
 }
 
@@ -71,7 +71,10 @@ export function WorkshopTable({ workshops, onEdit, onDelete, showActions = true 
   }
 
   const formatDate = (datetime: string) => {
+    if (!datetime) return "Chưa xác định"
     const date = new Date(datetime)
+    if (isNaN(date.getTime())) return "Ngày không hợp lệ"
+    
     return new Intl.DateTimeFormat("vi-VN", {
       day: "2-digit",
       month: "2-digit",
@@ -120,7 +123,7 @@ export function WorkshopTable({ workshops, onEdit, onDelete, showActions = true 
             </TableRow>
           ) : (
             paginatedWorkshops.map((workshop) => {
-              const status = statusConfig[workshop.status] || statusConfig.open
+              const status = statusConfig[workshop.status as keyof typeof statusConfig] || statusConfig.PUBLISHED
               const fillPercentage = (workshop.registered / workshop.capacity) * 100
 
               return (
@@ -129,27 +132,33 @@ export function WorkshopTable({ workshops, onEdit, onDelete, showActions = true 
                     {workshop.title}
                   </TableCell>
                   <TableCell className="text-slate-600 font-medium">{workshop.speaker}</TableCell>
-                  <TableCell className="text-slate-600 text-sm">
-                    {formatDate(workshop.datetime)}
+                  <TableCell className="text-sm text-slate-600 font-medium">
+                    {workshop.date} <br />
+                    <span className="text-xs text-slate-400">({workshop.time})</span>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
-                        <div
+                    <div className="flex flex-col gap-1.5 min-w-[120px]">
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <span className="text-slate-500">
+                          {workshop.registered}/{workshop.capacity}
+                        </span>
+                        <span className={cn(
+                          workshop.registered >= workshop.capacity ? "text-rose-600" : 
+                          (workshop.registered / workshop.capacity) >= 0.8 ? "text-amber-600" : "text-emerald-600"
+                        )}>
+                          {Math.round((workshop.registered / workshop.capacity) * 100)}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                        <div 
                           className={cn(
-                            "h-full rounded-full transition-all",
-                            fillPercentage >= 90
-                              ? "bg-amber-500"
-                              : fillPercentage >= 70
-                              ? "bg-emerald-500"
-                              : "bg-primary"
+                            "h-full transition-all duration-500",
+                            workshop.registered >= workshop.capacity ? "bg-rose-500" : 
+                            (workshop.registered / workshop.capacity) >= 0.8 ? "bg-amber-500" : "bg-emerald-500"
                           )}
-                          style={{ width: `${fillPercentage}%` }}
+                          style={{ width: `${Math.min(100, (workshop.registered / workshop.capacity) * 100)}%` }}
                         />
                       </div>
-                      <span className="text-xs font-semibold text-slate-700">
-                        {workshop.registered}/{workshop.capacity}
-                      </span>
                     </div>
                   </TableCell>
                   <TableCell className="text-slate-600 font-medium text-sm">
@@ -185,6 +194,13 @@ export function WorkshopTable({ workshops, onEdit, onDelete, showActions = true 
                           >
                             <Pencil className="mr-2 h-4 w-4" />
                             Chỉnh sửa
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => (window as any).onViewQR?.(workshop)}
+                            className="cursor-pointer font-medium"
+                          >
+                            <QrCode className="mr-2 h-4 w-4" />
+                            Xem mã QR
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => onDelete?.(workshop)}

@@ -119,34 +119,52 @@ async function fetchAPI<T = unknown>(
 
   if (body !== undefined && body !== null) {
     if (body instanceof FormData) {
-      // FormData: không set Content-Type, browser tự thêm boundary
       fetchInit.body = body
     } else {
       requestHeaders['Content-Type'] = 'application/json'
-      fetchInit.body = JSON.stringify(body)
+      // Chuyển đổi camelCase (TS) → snake_case (Go)
+      fetchInit.body = JSON.stringify(toSnakeCase(body))
     }
   }
 
-  const response = await fetch(url, fetchInit)
+  try {
+    const response = await fetch(url, fetchInit)
 
-  // Xử lý trường hợp không có body (204 No Content)
-  if (response.status === 204) {
-    return { success: true } as APIResponse<T>
+    // Xử lý trường hợp không có body (204 No Content)
+    if (response.status === 204) {
+      return { success: true } as APIResponse<T>
+    }
+
+    const json = await response.json()
+
+    // Chuyển đổi snake_case → camelCase
+    const converted = rawResponse ? json : toCamelCase<APIResponse<T>>(json)
+
+    // Nếu HTTP lỗi hoặc success=false, throw để caller xử lý
+    if (!response.ok || !converted.success) {
+      const errorMessage = converted.error || converted.message || `HTTP ${response.status}`
+      
+      // Tự động clear session nếu token hết hạn (401)
+      if (response.status === 401) {
+        auth.clearSession()
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login' // Chuyển hướng về trang login
+        }
+      }
+      
+      throw new APIError(errorMessage, response.status, response.headers)
+    }
+
+    return converted
+  } catch (error) {
+    // Log lỗi chi tiết để debug (Agent.md section 4.4)
+    console.error(`[API Client Error] ${method} ${endpoint}:`, error)
+    
+    if (error instanceof APIError) throw error
+    
+    // Lỗi network (Fail to fetch)
+    throw new Error('Không thể kết nối đến server. Vui lòng kiểm tra backend đang chạy tại port 8080.')
   }
-
-  const json = await response.json()
-
-  // Chuyển đổi snake_case → camelCase
-  const converted = rawResponse ? json : toCamelCase<APIResponse<T>>(json)
-
-  // Nếu HTTP lỗi hoặc success=false, throw để caller xử lý
-  if (!response.ok || !converted.success) {
-    const errorMessage = converted.error || converted.message || `HTTP ${response.status}`
-    const error = new APIError(errorMessage, response.status, response.headers)
-    throw error
-  }
-
-  return converted
 }
 
 // ==========================================

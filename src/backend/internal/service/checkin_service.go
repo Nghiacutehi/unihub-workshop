@@ -42,8 +42,8 @@ func (s *CheckinService) BulkSync(ctx context.Context, records []model.OfflineCh
 		}
 
 		// Conflict resolution: keep earliest timestamp
-		if reg.IsCheckedIn && reg.ScannedAt != nil {
-			existingTime := reg.ScannedAt.Unix()
+		if reg.IsCheckedIn {
+			existingTime := reg.UpdatedAt.Unix()
 			if rec.ScannedAt >= existingTime {
 				log.Printf("[CHECKIN_SYNC] Record %s skipped - existing check-in is earlier", rec.ID)
 				synced = append(synced, rec.ID) // Mark as synced since it's already checked in

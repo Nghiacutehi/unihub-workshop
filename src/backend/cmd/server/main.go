@@ -14,6 +14,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"unihub-workshop/internal/config"
+	"unihub-workshop/internal/crypto"
 	"unihub-workshop/internal/database"
 	"unihub-workshop/internal/handler"
 	"unihub-workshop/internal/middleware"
@@ -25,6 +26,15 @@ import (
 )
 
 func main() {
+	// Set default timezone to Vietnam
+	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		log.Printf("[CONFIG] Warning: Failed to load Asia/Ho_Chi_Minh location: %v", err)
+	} else {
+		time.Local = loc
+		log.Println("[CONFIG] System timezone set to Asia/Ho_Chi_Minh")
+	}
+
 	// Load config
 	cfg := config.Load()
 
@@ -58,11 +68,28 @@ func main() {
 	// Initialize waiting room (max 100 concurrent registrations, token valid for 5 min, queue valid for 1 hour)
 	waitingRoom := ratelimiter.NewWaitingRoom(redisClient, 100, 300, 3600)
 
+	// Initialize seat limiter (Double-check pattern)
+	seatLimiter := ratelimiter.NewSeatLimiter(redisClient)
+
+	// Initialize RSA Crypto Provider
+	var rsaProvider *crypto.RSAProvider
+	if cfg.RSAPrivateKey != "" {
+		var err error
+		rsaProvider, err = crypto.NewRSAProvider(cfg.RSAPrivateKey)
+		if err != nil {
+			log.Printf("[CRYPTO] Warning: Failed to initialize RSA provider: %v", err)
+		} else {
+			log.Println("[CRYPTO] RSA provider initialized successfully")
+		}
+	} else {
+		log.Println("[CRYPTO] Warning: RSA_PRIVATE_KEY is empty, signing will be disabled")
+	}
+
 	// Initialize services
 	authService := service.NewAuthService(userRepo, cfg.AuthSecret)
 	workshopService := service.NewWorkshopService(workshopRepo)
-	regService := service.NewRegistrationService(regRepo, workshopRepo, publisher, redisClient, waitingRoom)
-	paymentService := service.NewPaymentService(paymentRepo, regRepo, workshopRepo, publisher, redisClient, cfg.PaymentWebhookSecret, cfg.PaymentGatewayURL)
+	regService := service.NewRegistrationService(regRepo, workshopRepo, userRepo, rsaProvider, publisher, redisClient, waitingRoom, seatLimiter)
+	paymentService := service.NewPaymentService(paymentRepo, regRepo, workshopRepo, userRepo, rsaProvider, publisher, redisClient, cfg.PaymentWebhookSecret, cfg.PaymentGatewayURL)
 	checkinService := service.NewCheckinService(regRepo)
 
 	// Notification strategies (Strategy + Observer Pattern)
@@ -74,7 +101,7 @@ func main() {
 	aiService := service.NewAISummaryService(workshopRepo, cfg.AIApiURL, cfg.AIApiKey)
 
 	// Initialize handlers
-	authHandler := handler.NewAuthHandler(authService)
+	authHandler := handler.NewAuthHandler(authService, rsaProvider)
 	workshopHandler := handler.NewWorkshopHandler(workshopService)
 	regHandler := handler.NewRegistrationHandler(regService)
 	paymentHandler := handler.NewPaymentHandler(paymentService)
@@ -105,6 +132,7 @@ func main() {
 
 	// Public routes
 	r.Post("/api/v1/auth/login", authHandler.Login)
+	r.Get("/api/v1/auth/public-key", authHandler.GetPublicKey)
 
 	// Payment webhook (public, signature-verified)
 	r.Post("/api/v1/payment/webhook", paymentHandler.Webhook)
@@ -139,7 +167,7 @@ func main() {
 
 		// Student routes
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireRole(model.RoleStudent, model.RoleOrganizer))
+			r.Use(middleware.RequireRole(model.RoleStudent, model.RoleAdmin))
 
 			r.Post("/api/v1/registrations", regHandler.Register)
 			r.Get("/api/v1/registrations/waiting-room/{workshopId}", regHandler.GetWaitingRoomStatus)
@@ -150,7 +178,7 @@ func main() {
 
 		// Staff routes (check-in)
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireRole(model.RoleStaff, model.RoleOrganizer))
+			r.Use(middleware.RequireRole(model.RoleStaff, model.RoleAdmin))
 
 			r.Post("/api/v1/checkin/live", checkinHandler.LiveCheckin)
 			r.Post("/api/v1/checkin/sync", checkinHandler.BulkSync)
@@ -158,7 +186,7 @@ func main() {
 
 		// Organizer (admin) routes
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireRole(model.RoleOrganizer))
+			r.Use(middleware.RequireRole(model.RoleAdmin))
 
 			r.Post("/api/v1/workshops", workshopHandler.Create)
 			r.Put("/api/v1/workshops/{id}", workshopHandler.Update)
@@ -167,6 +195,7 @@ func main() {
 			r.Post("/api/v1/admin/import/csv", adminHandler.UploadCSV)
 			r.Get("/api/v1/admin/import/jobs", adminHandler.GetImportJobs)
 			r.Post("/api/v1/admin/workshops/{workshopId}/summary", adminHandler.UploadPDF)
+			r.Get("/api/v1/registrations/workshop/{workshopId}", regHandler.GetByWorkshopID)
 			r.Get("/api/v1/admin/stats", adminHandler.GetStats)
 			r.Get("/api/v1/admin/payment/circuit-breaker", paymentHandler.GetCircuitBreakerStatus)
 		})

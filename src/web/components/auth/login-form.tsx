@@ -70,7 +70,11 @@ export function LoginForm() {
 
       // Chuyển hướng theo Role từ Go Backend
       // Go Backend dùng: ORGANIZER, STAFF, STUDENT
-      if (user.role === 'ORGANIZER') {
+      console.log('User Role from Backend:', user.role)
+      const role = user.role?.toUpperCase()
+      const isAdmin = role === 'STAFF' || role === 'ADMIN'
+
+      if (isAdmin) {
         router.push('/admin')
       } else {
         router.push('/')
@@ -101,7 +105,7 @@ export function LoginForm() {
       {/* Student ID Field */}
       <div className="space-y-2">
         <label htmlFor="studentId" className="text-sm font-medium text-foreground">
-          Mã sinh viên
+          Mã số / Email Admin
         </label>
         <div className="relative">
           <User className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
@@ -109,7 +113,7 @@ export function LoginForm() {
             id="studentId"
             name="studentId"
             type="text"
-            placeholder="Nhập mã sinh viên (VD: 21127001)"
+            placeholder="Nhập mã số (VD: 21127001 hoặc ADMIN001)"
             value={formData.studentId}
             onChange={handleChange}
             className="pl-10 h-11 bg-background border-input"

@@ -112,11 +112,16 @@ func (e *EmailStrategy) Send(ctx context.Context, notif *model.Notification) err
 		return fmt.Errorf("user not found: %w", err)
 	}
 
+	if user.Email == nil || *user.Email == "" {
+		return fmt.Errorf("user %s has no email address", notif.UserID)
+	}
+
+	emailAddr := *user.Email
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<h2>%s</h2><p>%s</p>",
-		e.from, user.Email, notif.Title, notif.Title, notif.Content)
+		e.from, emailAddr, notif.Title, notif.Title, notif.Content)
 
 	addr := fmt.Sprintf("%s:%s", e.host, e.port)
-	return smtp.SendMail(addr, nil, e.from, []string{user.Email}, []byte(msg))
+	return smtp.SendMail(addr, nil, e.from, []string{emailAddr}, []byte(msg))
 }
 
 // ==========================================

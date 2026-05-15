@@ -1,35 +1,64 @@
-# UniHub Authentication & Authorization
+# Tài liệu Luồng Đăng nhập & Bảo mật (Auth Flow)
 
-Tài liệu đặc tả cơ chế bảo mật và phân quyền của hệ thống UniHub Workshop.
+Tài liệu này ghi lại chi tiết cơ chế đăng nhập, cấp JWT và bảo vệ Route đã được triển khai cho dự án UniHub.
 
-## 1. Cơ chế Xác thực (Authentication)
+## 1. Luồng hoạt động (Workflow)
 
-Hệ thống sử dụng cơ chế xác thực dựa trên dữ liệu người dùng được lưu trữ trực tiếp trong bảng `public.users` của PostgreSQL.
+```mermaid
+sequenceDiagram
+    participant User as Người dùng
+    participant Web as Next.js Frontend
+    participant API as Go Backend
+    participant DB as PostgreSQL (Supabase)
 
-- **Định danh:** Người dùng có thể đăng nhập bằng **Email** hoặc **Mã sinh viên (user_id)**.
-- **Mật khẩu:** Hiện tại đang lưu trữ dưới dạng bản rõ (plaintext) cho mục đích phát triển. 
-  - *Lưu ý:* Cần triển khai `bcrypt` hoặc `argon2` để băm mật khẩu trước khi demo thực tế.
-- **Session:** Sau khi đăng nhập thành công, thông tin người dùng được lưu vào **Cookie** tên là `unihub_session` dưới dạng JSON đã mã hóa URI.
+    User->>Web: Nhập MSSV/Email + Password
+    Web->>API: POST /api/v1/auth/login
+    API->>DB: Truy vấn user theo user_id hoặc email
+    DB-->>API: Trả về thông tin User + PasswordHash
+    API->>API: So sánh mật khẩu (Plaintext)
+    API->>API: Tạo JWT (userID, role)
+    API-->>Web: Trả về { success: true, data: { token, user } }
+    Web->>Web: Lưu unihub_token & unihub_session (Cookie)
+    Web->>Web: Redirect theo Role (ADMIN/STAFF -> /admin, STUDENT -> /)
+```
 
-## 2. Phân quyền (Authorization)
+## 2. Chi tiết kỹ thuật
 
-Hệ thống phân chia làm 3 vai trò chính dựa trên cột `role`:
+### Backend (Go)
+- **Endpoint:** `POST /api/v1/auth/login`
+- **Logic:** 
+  - Tìm kiếm linh hoạt: `SELECT ... WHERE user_id = $1 OR email = $1`.
+  - So sánh mật khẩu: Hiện đang dùng so sánh chuỗi trực tiếp (Plaintext).
+  - Cấp JWT: Sử dụng thư viện JWT để tạo token có hiệu lực 24h, chứa `userID` và `role`.
+- **Cấu trúc Response:**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "token": "ey...",
+      "user": {
+        "id": "uuid",
+        "student_id": "MSSV",
+        "full_name": "...",
+        "role": "ADMIN/STAFF/STUDENT"
+      }
+    }
+  }
+  ```
 
-| Vai trò | Quyền hạn | Route truy cập |
-| :--- | :--- | :--- |
-| **ADMIN** | Quản lý toàn bộ hệ thống, workshops, người dùng. | `/admin/*`, `/` |
-| **STAFF** | Quản lý workshop cụ thể, quét mã QR điểm danh. | `/admin/*` (giới hạn), Mobile App |
-| **STUDENT** | Xem workshop, đăng ký, nhận vé QR. | `/` (Home), Mobile App (User mode) |
+### Frontend (Next.js)
+- **Lưu trữ Session:** Lưu vào Browser Cookie (`unihub_token`, `unihub_session`) để Middleware có thể đọc được ở phía Server-side.
+- **Middleware (Route Guard):**
+  - Chặn mọi truy cập vào `/admin` nếu Role không phải là `ADMIN` hoặc `STAFF`.
+  - Chặn truy cập vào các trang nội bộ nếu chưa có Token.
+  - Tự động chuyển hướng về trang phù hợp nếu người dùng đã đăng nhập mà cố quay lại trang `/login`.
 
-### Bảo vệ Route (Middleware)
-- Toàn bộ route `/admin/*` được bảo vệ bởi `src/web/middleware.ts`.
-- Nếu người dùng chưa đăng nhập hoặc có `role = 'STUDENT'`, hệ thống sẽ tự động điều hướng về trang chủ hoặc trang đăng nhập.
+## 3. Các điểm quan trọng (Lưu ý cho Team)
+- **Role System:** Hệ thống hiện chỉ chấp nhận 3 vai trò: `ADMIN`, `STAFF`, `STUDENT`. Vai trò `ORGANIZER` cũ đã được loại bỏ/hợp nhất vào `ADMIN`.
+- **Case Insensitivity:** Logic kiểm tra Role ở cả Frontend và Middleware đã được sửa để **không phân biệt chữ hoa chữ thường** (tự động chuyển về `.toUpperCase()`).
+- **Database Mapping:** Cột MSSV trong DB là `user_id`, trong code Go map vào trường `StudentID`.
 
-## 3. Bảo mật trên Mobile
-- App Mobile sử dụng `AsyncStorage` để lưu trữ Session.
-- **Staff App** chỉ cho phép người dùng có role `ADMIN` hoặc `STAFF` đăng nhập. Nếu sinh viên cố tình đăng nhập vào app của nhân viên, hệ thống sẽ báo lỗi và từ chối cấp quyền.
-
-## 4. Kế hoạch bảo mật tiếp theo
-- Triển khai JWT (JSON Web Token) để thay thế việc lưu JSON thuần trong Cookie.
-- Kết nối với Backend Go để thực hiện xác thực tập trung.
-- Triển khai mã hóa RSA cho mã QR để chống làm giả vé.
+## 4. Kế hoạch tiếp theo (To-do)
+- [ ] Chuyển đổi mật khẩu sang mã hóa (Bcrypt) khi dự án lên Production.
+- [ ] Viết Unit Test cho `AuthService` và `UserRepo`.
+- [ ] Xây dựng tính năng "Quên mật khẩu" và "Đổi mật khẩu".

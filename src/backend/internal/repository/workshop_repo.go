@@ -17,11 +17,20 @@ func NewWorkshopRepo(pool *pgxpool.Pool) *WorkshopRepo {
 	return &WorkshopRepo{pool: pool}
 }
 
-func (r *WorkshopRepo) FindAll(ctx context.Context) ([]model.Workshop, error) {
-	rows, err := r.pool.Query(ctx,
-		`SELECT id, title, description, speaker, room, start_time, end_time,
-		        capacity, available_seats, price, summary, status, created_at
-		 FROM workshops WHERE status = 'PUBLISHED' ORDER BY start_time ASC`)
+func (r *WorkshopRepo) FindAll(ctx context.Context, title string) ([]model.Workshop, error) {
+	query := `SELECT id, title, description, speaker, room, start_time, end_time,
+		        capacity, available_seats, price, summary, status, room_layout_url, created_at
+		 FROM workshops WHERE 1=1`
+	
+	args := []interface{}{}
+	if title != "" {
+		query += " AND title ILIKE $1"
+		args = append(args, "%"+title+"%")
+	}
+	
+	query += " ORDER BY start_time ASC"
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +41,7 @@ func (r *WorkshopRepo) FindAll(ctx context.Context) ([]model.Workshop, error) {
 		var w model.Workshop
 		if err := rows.Scan(&w.ID, &w.Title, &w.Description, &w.Speaker, &w.Room,
 			&w.StartTime, &w.EndTime, &w.Capacity, &w.AvailableSeats, &w.Price,
-			&w.Summary, &w.Status, &w.CreatedAt); err != nil {
+			&w.Summary, &w.Status, &w.RoomLayoutURL, &w.CreatedAt); err != nil {
 			return nil, err
 		}
 		workshops = append(workshops, w)
@@ -44,11 +53,11 @@ func (r *WorkshopRepo) FindByID(ctx context.Context, id string) (*model.Workshop
 	var w model.Workshop
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, title, description, speaker, room, start_time, end_time,
-		        capacity, available_seats, price, summary, status, created_at
+		        capacity, available_seats, price, summary, status, room_layout_url, created_at
 		 FROM workshops WHERE id = $1`, id,
 	).Scan(&w.ID, &w.Title, &w.Description, &w.Speaker, &w.Room,
 		&w.StartTime, &w.EndTime, &w.Capacity, &w.AvailableSeats, &w.Price,
-		&w.Summary, &w.Status, &w.CreatedAt)
+		&w.Summary, &w.Status, &w.RoomLayoutURL, &w.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("workshop not found: %w", err)
 	}
@@ -57,9 +66,9 @@ func (r *WorkshopRepo) FindByID(ctx context.Context, id string) (*model.Workshop
 
 func (r *WorkshopRepo) Create(ctx context.Context, w *model.Workshop) error {
 	return r.pool.QueryRow(ctx,
-		`INSERT INTO workshops (title, description, speaker, room, start_time, end_time, capacity, available_seats, price, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9) RETURNING id, created_at`,
-		w.Title, w.Description, w.Speaker, w.Room, w.StartTime, w.EndTime, w.Capacity, w.Price, w.Status,
+		`INSERT INTO workshops (title, description, speaker, room, start_time, end_time, capacity, available_seats, price, status, summary, room_layout_url)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11) RETURNING id, created_at`,
+		w.Title, w.Description, w.Speaker, w.Room, w.StartTime, w.EndTime, w.Capacity, w.Price, w.Status, w.Summary, w.RoomLayoutURL,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
@@ -118,6 +127,16 @@ func (r *WorkshopRepo) Update(ctx context.Context, id string, req *model.UpdateW
 		args = append(args, *req.Status)
 		argIdx++
 	}
+	if req.Summary != nil {
+		setClauses = append(setClauses, fmt.Sprintf("summary = $%d", argIdx))
+		args = append(args, *req.Summary)
+		argIdx++
+	}
+	if req.RoomLayoutURL != nil {
+		setClauses = append(setClauses, fmt.Sprintf("room_layout_url = $%d", argIdx))
+		args = append(args, *req.RoomLayoutURL)
+		argIdx++
+	}
 
 	if len(setClauses) == 0 {
 		return fmt.Errorf("no fields to update")
@@ -137,7 +156,7 @@ func (r *WorkshopRepo) Update(ctx context.Context, id string, req *model.UpdateW
 }
 
 func (r *WorkshopRepo) Delete(ctx context.Context, id string) error {
-	_, err := r.pool.Exec(ctx, `UPDATE workshops SET status = 'CANCELLED' WHERE id = $1`, id)
+	_, err := r.pool.Exec(ctx, `UPDATE workshops SET status = 'DELETED' WHERE id = $1`, id)
 	return err
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"unihub-workshop/internal/circuitbreaker"
+	"unihub-workshop/internal/crypto"
 	"unihub-workshop/internal/model"
 	"unihub-workshop/internal/queue"
 	"unihub-workshop/internal/repository"
@@ -21,6 +22,8 @@ type PaymentService struct {
 	paymentRepo  *repository.PaymentRepo
 	regRepo      *repository.RegistrationRepo
 	workshopRepo *repository.WorkshopRepo
+	userRepo     *repository.UserRepo
+	crypto       *crypto.RSAProvider
 	publisher    *queue.Publisher
 	redisClient  *redis.Client
 	breaker      *circuitbreaker.CircuitBreaker
@@ -32,6 +35,8 @@ func NewPaymentService(
 	paymentRepo *repository.PaymentRepo,
 	regRepo *repository.RegistrationRepo,
 	workshopRepo *repository.WorkshopRepo,
+	userRepo *repository.UserRepo,
+	cryptoProvider *crypto.RSAProvider,
 	publisher *queue.Publisher,
 	redisClient *redis.Client,
 	webhookSecret, gatewayURL string,
@@ -40,6 +45,8 @@ func NewPaymentService(
 		paymentRepo:   paymentRepo,
 		regRepo:       regRepo,
 		workshopRepo:  workshopRepo,
+		userRepo:      userRepo,
+		crypto:        cryptoProvider,
 		publisher:     publisher,
 		redisClient:   redisClient,
 		breaker:       circuitbreaker.NewCircuitBreaker("payment-gateway", 0.5, 10*time.Second, 30*time.Second),
@@ -128,14 +135,21 @@ func (s *PaymentService) HandleWebhook(ctx context.Context, req *model.PaymentWe
 			return err
 		}
 
-		// Generate QR and update registration
-		qr, _ := generateQRCode(payment.RegistrationID, req.TransactionID)
-		if err := s.regRepo.UpdateStatusAndQR(ctx, payment.RegistrationID, model.RegSuccess, qr); err != nil {
+		// Generate RSA Signature after successful payment
+		var sig string
+		reg, _ := s.regRepo.FindByID(ctx, payment.RegistrationID)
+		if reg != nil && s.crypto != nil {
+			user, _ := s.userRepo.FindByID(ctx, reg.UserID)
+			if user != nil {
+				sig, _ = s.crypto.SignTicket(user.StudentID, reg.UserID, reg.WorkshopID)
+			}
+		}
+
+		if err := s.regRepo.UpdateStatusAndQR(ctx, payment.RegistrationID, model.RegSuccess, sig); err != nil {
 			return err
 		}
 
 		// Publish notification
-		reg, _ := s.regRepo.FindByID(ctx, payment.RegistrationID)
 		if reg != nil {
 			workshop, _ := s.workshopRepo.FindByID(ctx, reg.WorkshopID)
 			title := ""
@@ -143,12 +157,12 @@ func (s *PaymentService) HandleWebhook(ctx context.Context, req *model.PaymentWe
 				title = workshop.Title
 			}
 			notifEvent := model.NotificationEvent{
-				EventID:        fmt.Sprintf("PAYMENT_SUCCESS_%s", req.TransactionID),
-				UserID:         reg.UserID,
-				RegistrationID: reg.ID,
-				Type:           "PAYMENT_SUCCESS",
-				WorkshopTitle:  title,
-				QRCode:         qr,
+				EventID:         fmt.Sprintf("PAYMENT_SUCCESS_%s", req.TransactionID),
+				UserID:          reg.UserID,
+				RegistrationID:  reg.ID,
+				Type:            "PAYMENT_SUCCESS",
+				WorkshopTitle:   title,
+				TicketSignature: sig,
 			}
 			_ = s.publisher.Publish(ctx, queue.NotificationQueue, notifEvent)
 		}

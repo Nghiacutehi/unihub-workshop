@@ -23,6 +23,7 @@ const ticketTypes = [
   { value: "all", label: "Tất cả loại vé" },
   { value: "free", label: "Miễn phí" },
   { value: "paid", label: "Có phí" },
+  { value: "registered", label: "Đã đăng ký" },
 ]
 
 const dateFilters = [
@@ -32,7 +33,17 @@ const dateFilters = [
   { value: "this-month", label: "Tháng này" },
 ]
 
-export function WorkshopFilters() {
+interface WorkshopFiltersProps {
+  onSearch: (value: string) => void
+  onCategoryChange: (value: string) => void
+  onTicketTypeChange: (value: string) => void
+}
+
+export function WorkshopFilters({ 
+  onSearch, 
+  onCategoryChange, 
+  onTicketTypeChange 
+}: WorkshopFiltersProps) {
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
       {/* Search Input */}
@@ -41,27 +52,15 @@ export function WorkshopFilters() {
         <Input
           type="search"
           placeholder="Tìm kiếm workshop..."
-          className="h-10 pl-10"
+          className="h-11 pl-10 bg-background border-slate-200 focus:border-primary transition-all"
+          onChange={(e) => onSearch(e.target.value)}
         />
       </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-        <Select defaultValue="all">
-          <SelectTrigger className="h-10 w-full sm:w-[160px]">
-            <SelectValue placeholder="Thời gian" />
-          </SelectTrigger>
-          <SelectContent>
-            {dateFilters.map((filter) => (
-              <SelectItem key={filter.value} value={filter.value}>
-                {filter.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select defaultValue="all">
-          <SelectTrigger className="h-10 w-full sm:w-[160px]">
+        <Select defaultValue="all" onValueChange={onCategoryChange}>
+          <SelectTrigger className="h-11 w-full sm:w-[160px] bg-background">
             <SelectValue placeholder="Chủ đề" />
           </SelectTrigger>
           <SelectContent>
@@ -73,14 +72,28 @@ export function WorkshopFilters() {
           </SelectContent>
         </Select>
 
-        <Select defaultValue="all">
-          <SelectTrigger className="h-10 w-full sm:w-[140px]">
+        <Select defaultValue="all" onValueChange={onTicketTypeChange}>
+          <SelectTrigger className="h-11 w-full sm:w-[140px] bg-background">
             <SelectValue placeholder="Loại vé" />
           </SelectTrigger>
           <SelectContent>
             {ticketTypes.map((type) => (
               <SelectItem key={type.value} value={type.value}>
                 {type.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        
+        {/* Date filter simplified for now */}
+        <Select defaultValue="all">
+          <SelectTrigger className="h-11 w-full sm:w-[160px] bg-background">
+            <SelectValue placeholder="Thời gian" />
+          </SelectTrigger>
+          <SelectContent>
+            {dateFilters.map((filter) => (
+              <SelectItem key={filter.value} value={filter.value}>
+                {filter.label}
               </SelectItem>
             ))}
           </SelectContent>

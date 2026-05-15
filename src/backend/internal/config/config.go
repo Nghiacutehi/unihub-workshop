@@ -24,8 +24,9 @@ type Config struct {
 	// RabbitMQ
 	RabbitMQURL string
 
-	// JWT
-	AuthSecret string
+	// JWT & Crypto
+	AuthSecret    string
+	RSAPrivateKey string
 
 	// Payment
 	PaymentGatewayURL    string
@@ -71,7 +72,8 @@ func Load() *Config {
 
 		RabbitMQURL: getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 
-		AuthSecret: getEnv("AUTH_SECRET", "default-secret"),
+		AuthSecret:    getEnv("AUTH_SECRET", "default-secret"),
+		RSAPrivateKey: getEnv("RSA_PRIVATE_KEY", ""),
 
 		PaymentGatewayURL:    getEnv("PAYMENT_GATEWAY_URL", "http://localhost:8080/mock/payment"),
 		PaymentWebhookSecret: getEnv("PAYMENT_WEBHOOK_SECRET", "webhook-secret-key"),

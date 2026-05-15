@@ -17,8 +17,25 @@ func NewWorkshopService(repo *repository.WorkshopRepo) *WorkshopService {
 	return &WorkshopService{repo: repo}
 }
 
-func (s *WorkshopService) ListAll(ctx context.Context) ([]model.Workshop, error) {
-	return s.repo.FindAll(ctx)
+func (s *WorkshopService) ListAll(ctx context.Context, title string) ([]model.Workshop, error) {
+	workshops, err := s.repo.FindAll(ctx, title)
+	if err != nil {
+		return nil, err
+	}
+
+	// GIẢ LẬP KIỂM TRA TẢI HỆ THỐNG
+	// Trong thực tế, giá trị này có thể lấy từ Prometheus, Redis hoặc Metrics nội bộ
+	currentRequestRate := 5000 // Giả sử hiện tại là 5.000 req/s
+	MAX_ALLOWED_LOAD := 12000
+
+	if currentRequestRate > MAX_ALLOWED_LOAD {
+		// Nếu quá tải, Server sẽ ẩn toàn bộ Sơ đồ phòng để tiết kiệm tài nguyên
+		for i := range workshops {
+			workshops[i].RoomLayoutURL = nil
+		}
+	}
+
+	return workshops, nil
 }
 
 func (s *WorkshopService) GetByID(ctx context.Context, id string) (*model.Workshop, error) {
@@ -37,14 +54,16 @@ func (s *WorkshopService) Create(ctx context.Context, req *model.CreateWorkshopR
 
 	w := &model.Workshop{
 		Title:          req.Title,
-		Description:    req.Description,
-		Speaker:        req.Speaker,
+		Description:    &req.Description,
+		Speaker:        &req.Speaker,
 		Room:           req.Room,
 		StartTime:      startTime,
 		EndTime:        endTime,
 		Capacity:       req.Capacity,
 		AvailableSeats: req.Capacity,
 		Price:          req.Price,
+		Summary:        &req.Summary,
+		RoomLayoutURL:  &req.RoomLayoutURL,
 		Status:         model.WorkshopPublished,
 	}
 

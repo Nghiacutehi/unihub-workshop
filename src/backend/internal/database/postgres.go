@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -11,10 +12,19 @@ import (
 )
 
 func NewPostgresPool(cfg *config.Config) *pgxpool.Pool {
-	dsn := fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName, cfg.DBSSLMode,
-	)
+	// Sử dụng net/url để encode password an toàn (tránh lỗi ký tự đặc biệt như @)
+	userInfo := url.UserPassword(cfg.DBUser, cfg.DBPassword)
+	host := fmt.Sprintf("%s:%s", cfg.DBHost, cfg.DBPort)
+	
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     userInfo,
+		Host:     host,
+		Path:     cfg.DBName,
+		RawQuery: fmt.Sprintf("sslmode=%s&timezone=Asia/Ho_Chi_Minh", cfg.DBSSLMode),
+	}
+	
+	dsn := u.String()
 
 	poolCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

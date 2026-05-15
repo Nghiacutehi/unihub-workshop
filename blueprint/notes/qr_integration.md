@@ -1,44 +1,50 @@
 # Hệ thống Tích hợp QR & Điểm danh Offline-First (UniHub)
 
-Tài liệu này ghi lại kiến trúc, luồng xử lý và các cơ chế vận hành thực tế của hệ thống điểm danh QR sau khi đã tối ưu hóa.
+Tài liệu này quy định chuẩn định dạng mã QR và cơ chế ký số bảo mật cho hệ thống vé điện tử UniHub.
 
-## 1. Kiến trúc Tổng quan (Architecture)
-Hệ thống tuân thủ nguyên tắc **Offline-First**, đảm bảo tốc độ phản hồi < 50ms ngay cả khi không có mạng.
+## 1. Cấu trúc mã QR (JSON Payload)
 
-*   **Client (Mobile):** Quét mã -> Kiểm tra ID & Phòng (Local) -> Kiểm tra trùng lập (Local + Global Cache) -> Lưu SQLite -> Đồng bộ ngầm.
-*   **Backend (Next.js API):** Nhận gói đồng bộ -> Cập nhật Database theo UUID -> Trả về kết quả xác nhận.
-*   **Database:** SQLite (Mobile) & PostgreSQL (Server) đồng bộ trạng thái qua `sync_status`.
+Mã QR chứa chính xác 4 trường dữ liệu để tối ưu tốc độ quét và độ bảo mật.
 
-## 2. Cấu trúc dữ liệu mã QR
-Mã QR sử dụng định dạng JSON thu gọn để tối ưu tốc độ nhận diện. Lớp chữ ký số đã được gỡ bỏ ở Client để ưu tiên hiệu năng:
+| Trường | Mô tả | Ví dụ |
+| :--- | :--- | :--- |
+| `sid` | Student ID (MSSV) | `HE150123` |
+| `uid` | User UUID | `550e8400-e29b-41d4-a716-446655440000` |
+| `wid` | Workshop ID | `workshop-001` |
+| `sig` | RSA Signature (Base64) | `A2b5... (256+ bytes)` |
+
+**Ví dụ JSON:**
 ```json
 {
-  "sid": "21127003",                    // MSSV (Hiển thị cho nhân viên đối chiếu)
-  "uid": "ae94d6d6-5d64-4b6e-b81b...", // User UUID (Khóa chính hệ thống - Xử lý siêu tốc)
-  "wid": "22222222-0000-0000-0000...", // Workshop ID (Dùng để kiểm tra đúng phòng/đúng buổi)
-  "sig": "..."                         // (Legacy) Chỉ dùng cho xác thực phía Server nếu cần
+  "sid": "HE150123",
+  "uid": "550e8400-e29b-41d4-a716-446655440000",
+  "wid": "workshop-001",
+  "sig": "iPZCXeWuDsEvJ0vcUL8I874dsEtRkT+nkukiQLFI..."
 }
 ```
 
-## 3. Luồng xử lý quét mã (Scanning Logic)
-Quy trình kiểm tra 3 bước cực nhẹ tại Client:
-1.  **Đúng phòng (Room Check):** So sánh `wid` trong QR với `workshopId` đang mở. Chặn tuyệt đối việc quét nhầm vé của Workshop khác.
-2.  **Chống quét trùng (Duplicate Check):** Tra cứu MSSV trong bảng `already_checked_in` (Toàn cục) và `local_checkins` (Tại thiết bị).
-3.  **Ghi nhận (Storage):** Lưu vào SQLite với trạng thái `PENDING` và phản hồi tức thì cho nhân viên.
+## 2. Cơ chế Ký số (Backend)
 
-## 4. Cơ chế Đồng bộ (Sync Mechanism)
-*   **Trạng thái SYNCED:** Bản ghi chuyển từ `PENDING` sang `SYNCED` sau khi Server xác nhận. Dữ liệu vẫn được giữ lại trong ca làm việc để tra cứu.
-*   **Global Cache:** Mỗi khi mở Workshop, App tải danh sách những người đã điểm danh trước đó từ Server về thiết bị (Bảng `already_checked_in`). Điều này giúp chặn gian lận giữa các cổng soát vé khác nhau.
-*   **Auto-Cleanup:** Tự động dọn dẹp các bản ghi của Workshop đã kết thúc > 24 giờ để tối ưu bộ nhớ.
+*   **Thuật toán:** RSA-2048 với SHA-256 (RSASSA-PKCS1-v1_5).
+*   **Dữ liệu thô (Raw Data):** Chữ ký được tạo ra từ chuỗi kết hợp theo định dạng: `sid|uid|wid`.
+*   **Quy trình:**
+    1.  Tạo chuỗi `rawData = sid + "|" + uid + "|" + wid`.
+    2.  Băm `rawData` bằng SHA-256.
+    3.  Ký bản băm bằng **RSA Private Key**.
+    4.  Encode kết quả sang Base64 để đưa vào trường `sig`.
 
-## 5. Giao diện & Trải nghiệm (UI/UX)
-Hệ thống sử dụng ngôn ngữ thiết kế **Midnight Indigo** đồng bộ toàn hệ thống:
-*   **Màu chủ đạo:** `#312E81` (Dùng cho Nút bấm chính, Header và Logo).
-*   **Phản hồi trạng thái:**
-    *   **Xanh lá (#10B981):** Thành công (Vé hợp lệ).
-    *   **Vàng/Cam (#F59E0B):** Cảnh báo (Vé đã quét rồi).
-    *   **Đỏ (#EF4444):** Lỗi (Sai phòng hoặc mã QR không hợp lệ).
+## 3. Cơ chế Xác thực (Mobile Staff App)
 
-## 6. Lưu ý Vận hành
-*   **Kết nối:** Mobile App kết nối với Backend qua địa chỉ IP Local (Cấu hình tại `services/crypto.ts`).
-*   **Hiệu năng:** Đã loại bỏ polyfill Crypto giúp giảm dung lượng App và tăng tính ổn định trên các dòng máy cũ.
+Xác thực được thực hiện 100% Offline trên thiết bị của nhân viên để đảm bảo tốc độ.
+
+1.  **Lấy Public Key:** Mobile tải Public Key từ `/api/v1/auth/public-key` và lưu vào `AsyncStorage`.
+2.  **Verify:**
+    -   Parse mã QR để lấy 4 trường.
+    -   Tạo lại chuỗi `rawData` từ `sid`, `uid`, `wid`.
+    -   Sử dụng Public Key để giải mã `sig` và đối soát với bản băm của `rawData`.
+3.  **Kết quả:** Nếu khớp, vé hợp lệ. Nếu không, hiển thị cảnh báo "VÉ GIẢ MẠO".
+
+## 4. Bảo mật Offline
+
+*   Hệ thống ngăn chặn việc sử dụng lại vé (Double Spending) bằng cách lưu lịch sử quét vào **SQLite** nội bộ trên điện thoại.
+*   Khi có mạng trở lại, ứng dụng sẽ đồng bộ toàn bộ lịch sử này về Server để cập nhật trạng thái "Đã tham gia" cho sinh viên.

@@ -4,16 +4,34 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"unihub-workshop/internal/crypto"
 	"unihub-workshop/internal/model"
 	"unihub-workshop/internal/service"
 )
 
 type AuthHandler struct {
 	authService *service.AuthService
+	rsaProvider *crypto.RSAProvider
 }
 
-func NewAuthHandler(authService *service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService *service.AuthService, rsaProvider *crypto.RSAProvider) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+		rsaProvider: rsaProvider,
+	}
+}
+
+func (h *AuthHandler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
+	pubKey, err := h.rsaProvider.GetPublicKeyPEM()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, model.APIResponse{Error: "Failed to export public key"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, model.APIResponse{
+		Success: true,
+		Data:    map[string]string{"public_key": pubKey},
+	})
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {

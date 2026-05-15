@@ -1,14 +1,19 @@
 "use client"
 
+import { useState } from "react"
 import { Calendar, MapPin, User } from "lucide-react"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Button } from "@/components/ui/button"
+import { WorkshopDetailDialog } from "./workshop-detail-dialog"
+import { useRegistration } from "@/hooks/use-registration"
+import { cn } from "@/lib/utils"
 
 export interface Workshop {
   id: string
   title: string
+  description: string // Backend đã có trường này
   speaker: string
   speakerTitle?: string
   date: string
@@ -20,6 +25,10 @@ export interface Workshop {
   price?: number
   category: string
   imageUrl?: string
+  summary?: string // Cột summary từ Backend
+  roomLayoutUrl?: string
+  isRegistered?: boolean
+  status: "PUBLISHED" | "CLOSED" | "DELETED"
 }
 
 interface WorkshopCardProps {
@@ -27,111 +36,162 @@ interface WorkshopCardProps {
 }
 
 export function WorkshopCard({ workshop }: WorkshopCardProps) {
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const { isRegistering, regStatus, waitingPosition, handleRegister } = useRegistration(workshop.id)
+
   const filledPercentage = Math.round(
     ((workshop.capacity - workshop.availableSeats) / workshop.capacity) * 100
   )
   const isAlmostFull = filledPercentage >= 80
   const isFull = workshop.availableSeats === 0
+  const isOpen = workshop.status === "PUBLISHED"
+
+  // Cấu hình nút dựa trên trạng thái
+  const getButtonConfig = () => {
+    if (workshop.status === "DELETED") {
+      return { 
+        label: "Đã hủy", 
+        variant: "destructive" as const, 
+        disabled: true 
+      }
+    }
+    if (workshop.status === "CLOSED") {
+      return { 
+        label: "Đã đóng đăng ký", 
+        variant: "outline" as const, 
+        className: "border-amber-500 text-amber-600 bg-amber-50 hover:bg-amber-50",
+        disabled: true 
+      }
+    }
+    if (workshop.isRegistered) {
+      return { 
+        label: "Đã đăng ký", 
+        variant: "secondary" as const, 
+        disabled: true 
+      }
+    }
+    if (isFull) {
+      return { 
+        label: "Đã hết chỗ", 
+        variant: "outline" as const, 
+        disabled: true 
+      }
+    }
+    if (isRegistering) {
+      return { 
+        label: regStatus || "Đang xử lý...", 
+        variant: "default" as const, 
+        disabled: true 
+      }
+    }
+    return { 
+      label: "Đăng ký tham gia", 
+      variant: "default" as const, 
+      disabled: false 
+    }
+  }
+
+  const btnConfig = getButtonConfig()
 
   return (
-    <Card className="group flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
-      {/* Image placeholder */}
-      <div className="relative h-40 w-full bg-muted">
-        {workshop.imageUrl ? (
-          <img
-            src={workshop.imageUrl}
-            alt={workshop.title}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/5 to-primary/10">
-            <span className="text-4xl font-bold text-primary/20">
-              {workshop.title.charAt(0)}
-            </span>
-          </div>
-        )}
-        {/* Category Badge */}
-        <Badge
-          variant="secondary"
-          className="absolute left-3 top-3 bg-card/90 backdrop-blur-sm"
-        >
-          {workshop.category}
-        </Badge>
-        {/* Ticket Type Badge */}
-        <Badge
-          className={`absolute right-3 top-3 ${
-            workshop.ticketType === "free"
-              ? "bg-success text-success-foreground"
-              : "bg-primary text-primary-foreground"
-          }`}
-        >
-          {workshop.ticketType === "free"
-            ? "Miễn phí"
-            : `${workshop.price?.toLocaleString("vi-VN")}đ`}
-        </Badge>
-      </div>
-
-      <CardHeader className="gap-2 pb-2">
-        <h3 className="line-clamp-2 text-base font-semibold leading-tight text-foreground group-hover:text-primary transition-colors">
-          {workshop.title}
-        </h3>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <User className="h-4 w-4 shrink-0" />
-          <span className="truncate">{workshop.speaker}</span>
-        </div>
-      </CardHeader>
-
-      <CardContent className="flex flex-col gap-3 pb-4">
-        <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <Calendar className="h-4 w-4 shrink-0" />
-            <span>
-              {workshop.date} • {workshop.time}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <MapPin className="h-4 w-4 shrink-0" />
-            <span className="truncate">{workshop.location}</span>
-          </div>
-        </div>
-
-        {/* Seat Progress */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Chỗ ngồi</span>
-            <span
-              className={`font-medium ${
-                isFull
-                  ? "text-destructive"
-                  : isAlmostFull
-                  ? "text-warning"
-                  : "text-muted-foreground"
-              }`}
+    <>
+      <Card 
+        className="group flex h-full flex-col overflow-hidden transition-all hover:border-primary/50 hover:shadow-md cursor-pointer"
+        onClick={() => setIsDetailOpen(true)}
+      >
+        <CardHeader className="space-y-3 pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <Badge variant="outline" className="font-medium text-primary border-primary/20 bg-primary/5">
+              {workshop.category}
+            </Badge>
+            <Badge
+              className={
+                workshop.ticketType === "free"
+                  ? "bg-emerald-500 hover:bg-emerald-600 text-white"
+                  : "bg-blue-600 hover:bg-blue-700 text-white"
+              }
             >
-              {workshop.availableSeats}/{workshop.capacity}
-            </span>
+              {workshop.ticketType === "free"
+                ? "Miễn phí"
+                : `${workshop.price?.toLocaleString("vi-VN")}đ`}
+            </Badge>
           </div>
-          <Progress
-            value={filledPercentage}
-            className={`h-1.5 ${
-              isFull
-                ? "[&>div]:bg-destructive"
-                : isAlmostFull
-                ? "[&>div]:bg-warning"
-                : "[&>div]:bg-success"
-            }`}
-          />
-        </div>
-      </CardContent>
+          
+          <h3 className="line-clamp-2 text-lg font-bold leading-tight text-foreground group-hover:text-primary transition-colors">
+            {workshop.title}
+          </h3>
+          
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted">
+              <User className="h-3.5 w-3.5" />
+            </div>
+            <span className="truncate">{workshop.speaker}</span>
+          </div>
+        </CardHeader>
 
-      <CardFooter className="mt-auto pt-0">
-        <Button
-          className="h-10 w-full font-medium"
-          disabled={isFull}
-        >
-          {isFull ? "Hết chỗ" : "Đăng ký ngay"}
-        </Button>
-      </CardFooter>
-    </Card>
+        <CardContent className="flex flex-col gap-4 pb-4">
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 shrink-0 text-primary/70" />
+              <span>
+                {workshop.date} • {workshop.time}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 shrink-0 text-primary/70" />
+              <span className="truncate">{workshop.location}</span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-medium">
+              <span className="text-muted-foreground">Sức chứa: {workshop.capacity}</span>
+              <span
+                className={
+                  isFull
+                    ? "text-destructive"
+                    : isAlmostFull
+                    ? "text-amber-500"
+                    : "text-emerald-600"
+                }
+              >
+                Còn {workshop.availableSeats} chỗ
+              </span>
+            </div>
+            <Progress
+              value={filledPercentage}
+              className={`h-2 ${
+                isFull
+                  ? "[&>div]:bg-destructive"
+                  : isAlmostFull
+                  ? "[&>div]:bg-amber-500"
+                  : "[&>div]:bg-emerald-500"
+              }`}
+            />
+          </div>
+        </CardContent>
+
+        <CardFooter className="mt-auto pt-2">
+          <Button
+            className={cn("w-full font-semibold shadow-sm transition-all active:scale-95", btnConfig.className)}
+            disabled={btnConfig.disabled}
+            variant={btnConfig.variant}
+            onClick={(e) => {
+              if (btnConfig.disabled) return
+              e.stopPropagation()
+              handleRegister()
+            }}
+          >
+            {btnConfig.label}
+          </Button>
+        </CardFooter>
+      </Card>
+
+      <WorkshopDetailDialog 
+        workshop={workshop} 
+        open={isDetailOpen} 
+        onOpenChange={setIsDetailOpen} 
+      />
+    </>
   )
 }

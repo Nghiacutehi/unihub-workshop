@@ -15,22 +15,34 @@ const (
 	NotificationQueue = "notification_queue"
 )
 
-// Publisher manages RabbitMQ publishing
+// Publisher manages RabbitMQ publishing with auto-reconnect
 type Publisher struct {
-	conn    *amqp.Connection
-	channel *amqp.Channel
+	url      string
+	conn     *amqp.Connection
+	channel  *amqp.Channel
+	notif    chan *amqp.Error
+	isClosed bool
 }
 
 func NewPublisher(url string) (*Publisher, error) {
-	conn, err := amqp.Dial(url)
+	p := &Publisher{url: url}
+	if err := p.connect(); err != nil {
+		return nil, err
+	}
+	go p.handleReconnect()
+	return p, nil
+}
+
+func (p *Publisher) connect() error {
+	conn, err := amqp.Dial(p.url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+		return err
 	}
 
 	ch, err := conn.Channel()
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("failed to open channel: %w", err)
+		return err
 	}
 
 	// Declare queues
@@ -40,34 +52,56 @@ func NewPublisher(url string) (*Publisher, error) {
 			"x-dead-letter-routing-key": q + "_dlq",
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to declare queue %s: %w", q, err)
+			return err
 		}
-
-		// Declare DLQ
-		_, err = ch.QueueDeclare(q+"_dlq", true, false, false, false, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to declare DLQ for %s: %w", q, err)
-		}
+		ch.QueueDeclare(q+"_dlq", true, false, false, false, nil)
 	}
 
-	log.Println("[RABBITMQ] Publisher connected and queues declared")
-	return &Publisher{conn: conn, channel: ch}, nil
+	p.conn = conn
+	p.channel = ch
+	p.notif = make(chan *amqp.Error)
+	p.channel.NotifyClose(p.notif)
+
+	log.Println("[RABBITMQ] Publisher connected")
+	return nil
+}
+
+func (p *Publisher) handleReconnect() {
+	for {
+		if p.isClosed {
+			return
+		}
+
+		err := <-p.notif
+		if err != nil {
+			log.Printf("[RABBITMQ] Connection lost, reconnecting... (%v)", err)
+			for {
+				time.Sleep(2 * time.Second)
+				if err := p.connect(); err == nil {
+					log.Println("[RABBITMQ] Reconnected successfully")
+					break
+				}
+				log.Println("[RABBITMQ] Reconnect failed, retrying...")
+			}
+		}
+	}
 }
 
 func (p *Publisher) Publish(ctx context.Context, queueName string, message interface{}) error {
+	if p.channel == nil || p.channel.IsClosed() {
+		return fmt.Errorf("rabbitmq channel is closed")
+	}
+
 	body, err := json.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
+		return err
 	}
 
 	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	return p.channel.PublishWithContext(publishCtx,
-		"",        // exchange
-		queueName, // routing key
-		false,     // mandatory
-		false,     // immediate
+		"", queueName, false, false,
 		amqp.Publishing{
 			ContentType:  "application/json",
 			Body:         body,
@@ -78,6 +112,7 @@ func (p *Publisher) Publish(ctx context.Context, queueName string, message inter
 }
 
 func (p *Publisher) Close() {
+	p.isClosed = true
 	if p.channel != nil {
 		p.channel.Close()
 	}

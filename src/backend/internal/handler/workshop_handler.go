@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 
 	"unihub-workshop/internal/model"
@@ -16,8 +17,10 @@ func NewWorkshopHandler(ws *service.WorkshopService) *WorkshopHandler {
 }
 
 func (h *WorkshopHandler) List(w http.ResponseWriter, r *http.Request) {
-	workshops, err := h.workshopService.ListAll(r.Context())
+	title := r.URL.Query().Get("title")
+	workshops, err := h.workshopService.ListAll(r.Context(), title)
 	if err != nil {
+		log.Printf("[ERROR] ListAll failed: %v", err)
 		errorResponse(w, http.StatusInternalServerError, "Failed to fetch workshops")
 		return
 	}

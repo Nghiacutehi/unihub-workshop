@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Vibration, Activi
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { X } from 'lucide-react-native';
 import { saveCheckinLocal, isStudentCheckedIn } from '../services/storage';
+import { verifyTicket } from '../services/crypto';
 import * as Haptics from 'expo-haptics';
 
 const { width, height } = Dimensions.get('window');
@@ -70,7 +71,15 @@ export default function ScannerScreen({ currentWorkshop, onClose, onScanSuccess 
       const wid = String(payload.wid || '').trim();
       const sig = String(payload.sig || '').trim();
 
-      if (!sid || !wid || !uid) throw new Error('FORMAT_ERROR');
+      if (!sid || !wid || !uid || !sig) throw new Error('FORMAT_ERROR');
+
+      // 4. XÁC THỰC CHỮ KÝ RSA (OFFLINE)
+      const isAuthentic = await verifyTicket({ sid, uid, wid, sig });
+      if (!isAuthentic) {
+        setScanStatus('error');
+        setMessage('❌ CHỮ KÝ KHÔNG HỢP LỆ!');
+        return;
+      }
 
       console.log(`🔍 [Scanner] Khớp: SV ${sid}, Workshop: ${wid}, UUID: ${uid}`);
 

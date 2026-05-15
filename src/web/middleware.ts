@@ -28,7 +28,9 @@ export function middleware(request: NextRequest) {
     if (sessionCookie && pathname.startsWith('/login')) {
       try {
         const user = JSON.parse(decodeURIComponent(sessionCookie))
-        const dest = user.role === 'ORGANIZER' || user.role === 'STAFF' ? '/admin' : '/'
+        const role = user.role?.toUpperCase()
+        const isAdmin = role === 'ADMIN' || role === 'STAFF'
+        const dest = isAdmin ? '/admin' : '/'
         return NextResponse.redirect(new URL(dest, request.url))
       } catch {
         // Cookie hỏng → xóa và cho vào login
@@ -50,7 +52,8 @@ export function middleware(request: NextRequest) {
   if (pathname.startsWith('/admin')) {
     try {
       const user = JSON.parse(decodeURIComponent(sessionCookie))
-      if (user.role !== 'ORGANIZER' && user.role !== 'STAFF') {
+      const role = user.role?.toUpperCase()
+      if (role !== 'ADMIN' && role !== 'STAFF') {
         return NextResponse.redirect(new URL('/', request.url))
       }
     } catch {

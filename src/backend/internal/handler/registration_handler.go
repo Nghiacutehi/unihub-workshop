@@ -95,12 +95,21 @@ func (h *RegistrationHandler) GetStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Data: status})
 }
 
-// MyRegistrations returns all registrations for the authenticated user
 func (h *RegistrationHandler) MyRegistrations(w http.ResponseWriter, r *http.Request) {
 	userID := getUserID(r)
-	regs, err := h.regService.GetUserRegistrations(r.Context(), userID)
+	regs, err := h.regService.GetUserRegistrationsWithWorkshop(r.Context(), userID)
 	if err != nil {
 		errorResponse(w, http.StatusInternalServerError, "Failed to fetch registrations")
+		return
+	}
+	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Data: regs})
+}
+
+func (h *RegistrationHandler) GetByWorkshopID(w http.ResponseWriter, r *http.Request) {
+	workshopID := getURLParam(r, "workshopId")
+	regs, err := h.regService.GetByWorkshop(r.Context(), workshopID)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, "Failed to fetch registrations for workshop")
 		return
 	}
 	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Data: regs})

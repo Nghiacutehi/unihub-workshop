@@ -2,14 +2,13 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"sync"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"github.com/skip2/go-qrcode"
+	"unihub-workshop/internal/crypto"
 	"unihub-workshop/internal/model"
 	"unihub-workshop/internal/queue"
 	"unihub-workshop/internal/ratelimiter"
@@ -19,9 +18,12 @@ import (
 type RegistrationService struct {
 	regRepo      *repository.RegistrationRepo
 	workshopRepo *repository.WorkshopRepo
+	userRepo     *repository.UserRepo
+	crypto       *crypto.RSAProvider
 	publisher    *queue.Publisher
 	redis        *redis.Client
 	waitingRoom  *ratelimiter.WaitingRoom
+	seatLimiter  *ratelimiter.SeatLimiter
 	mu           sync.RWMutex
 	statuses     map[string]*model.RegistrationStatusResponse
 }
@@ -29,16 +31,22 @@ type RegistrationService struct {
 func NewRegistrationService(
 	regRepo *repository.RegistrationRepo,
 	workshopRepo *repository.WorkshopRepo,
+	userRepo *repository.UserRepo,
+	cryptoProvider *crypto.RSAProvider,
 	publisher *queue.Publisher,
 	redisClient *redis.Client,
 	waitingRoom *ratelimiter.WaitingRoom,
+	seatLimiter *ratelimiter.SeatLimiter,
 ) *RegistrationService {
 	return &RegistrationService{
 		regRepo:      regRepo,
 		workshopRepo: workshopRepo,
+		userRepo:     userRepo,
+		crypto:       cryptoProvider,
 		publisher:    publisher,
 		redis:        redisClient,
 		waitingRoom:  waitingRoom,
+		seatLimiter:  seatLimiter,
 		statuses:     make(map[string]*model.RegistrationStatusResponse),
 	}
 }
@@ -72,7 +80,35 @@ func (s *RegistrationService) EnqueueRegistration(ctx context.Context, userID, w
 		Message:       "Your registration is being processed",
 	})
 
+	// ==========================================
+	// 2. REDIS SEAT LOCK (DOUBLE-CHECK)
+	// ==========================================
+	// Before enqueuing, we try to decrement the seat count in Redis.
+	// This acts as a high-performance shield for the database.
+	
+	// Pre-warm cache if needed (Get workshop to know initial seats)
+	workshop, err := s.workshopRepo.FindByID(ctx, workshopID)
+	if err != nil {
+		return "", fmt.Errorf("workshop not found: %w", err)
+	}
+	
+	if err := s.seatLimiter.PrepareCache(ctx, workshopID, workshop.AvailableSeats); err != nil {
+		return "", fmt.Errorf("failed to prepare seat cache: %w", err)
+	}
+
+	success, err := s.seatLimiter.TryAcquireSeat(ctx, workshopID)
+	if err != nil {
+		return "", fmt.Errorf("failed to acquire seat in Redis: %w", err)
+	}
+
+	if !success {
+		return "", fmt.Errorf("workshop is full (verified by cache)")
+	}
+
 	if err := s.publisher.Publish(ctx, queue.RegistrationQueue, msg); err != nil {
+		// Rollback Redis seat if publishing fails
+		_ = s.seatLimiter.ReleaseSeat(ctx, workshopID)
+		
 		s.SetStatus(correlationID, &model.RegistrationStatusResponse{
 			CorrelationID: correlationID,
 			Status:        model.RegFailed,
@@ -108,12 +144,16 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 	defer tx.Rollback(ctx)
 
 	// SELECT FOR UPDATE - Pessimistic Lock
-	remainingSeats, err := s.workshopRepo.DecrementSeatWithLock(ctx, tx, msg.WorkshopID)
+	_, err = s.workshopRepo.DecrementSeatWithLock(ctx, tx, msg.WorkshopID)
 	if err != nil {
+		// DB says no seats! (Inconsistency with Redis)
+		// We should release the tentative seat we took in Redis
+		_ = s.seatLimiter.ReleaseSeat(ctx, msg.WorkshopID)
+		
 		s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
 			CorrelationID: msg.CorrelationID,
 			Status:        model.RegRejected,
-			Message:       "No available seats",
+			Message:       "No available seats (Database verified)",
 		})
 		return err
 	}
@@ -126,33 +166,37 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 		regStatus = model.RegSuccess
 	}
 
-	// Generate QR code for free workshops
-	var qrCodeStr *string
-	if regStatus == model.RegSuccess {
-		qr, err := generateQRCode(msg.UserID, msg.WorkshopID)
-		if err != nil {
-			log.Printf("[WORKER] QR generation failed: %v", err)
-		} else {
-			qrCodeStr = &qr
-		}
-	}
-
 	reg := &model.Registration{
 		UserID:     msg.UserID,
 		WorkshopID: msg.WorkshopID,
 		Status:     regStatus,
-		QRCode:     qrCodeStr,
 	}
 
 	if err := s.regRepo.Create(ctx, tx, reg); err != nil {
 		return fmt.Errorf("failed to create registration: %w", err)
 	}
 
+	// Generate RSA Signature for successful registrations (now we have reg.ID)
+	if regStatus == model.RegSuccess && s.crypto != nil {
+		user, err := s.userRepo.FindByID(ctx, msg.UserID)
+		if err == nil {
+			// Sign with 4-field context for mobile: sid, uid, wid
+			qrData, err := s.crypto.SignTicket(user.StudentID, msg.UserID, msg.WorkshopID)
+			if err == nil {
+				reg.TicketSignature = &qrData
+				// Update the signature in DB
+				_, _ = tx.Exec(ctx, "UPDATE registrations SET ticket_signature = $1 WHERE id = $2", qrData, reg.ID)
+			} else {
+				log.Printf("[WORKER] RSA signing failed: %v", err)
+			}
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("[WORKER] Registration created: id=%s seats_remaining=%d status=%s", reg.ID, remainingSeats, regStatus)
+	log.Printf("[WORKER] Registration finalized: id=%s status=%s", reg.ID, regStatus)
 
 	s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
 		CorrelationID: msg.CorrelationID,
@@ -164,14 +208,15 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 	// If free workshop, publish notification event
 	if regStatus == model.RegSuccess {
 		notifEvent := model.NotificationEvent{
-			EventID:        fmt.Sprintf("REG_SUCCESS_%s", reg.ID),
-			UserID:         msg.UserID,
-			RegistrationID: reg.ID,
-			Type:           "REGISTRATION_SUCCESS",
-			WorkshopTitle:  workshop.Title,
+			EventID:         fmt.Sprintf("REG_SUCCESS_%s", reg.ID),
+			UserID:          msg.UserID,
+			RegistrationID:  reg.ID,
+			Type:            "REGISTRATION_SUCCESS",
+			WorkshopTitle:   workshop.Title,
+			TicketSignature: "",
 		}
-		if qrCodeStr != nil {
-			notifEvent.QRCode = *qrCodeStr
+		if reg.TicketSignature != nil {
+			notifEvent.TicketSignature = *reg.TicketSignature
 		}
 		_ = s.publisher.Publish(ctx, queue.NotificationQueue, notifEvent)
 	}
@@ -194,12 +239,10 @@ func (s *RegistrationService) SetStatus(correlationID string, status *model.Regi
 func (s *RegistrationService) GetUserRegistrations(ctx context.Context, userID string) ([]model.Registration, error) {
 	return s.regRepo.FindByUser(ctx, userID)
 }
+func (s *RegistrationService) GetUserRegistrationsWithWorkshop(ctx context.Context, userID string) ([]model.RegistrationWithWorkshop, error) {
+	return s.regRepo.FindByUserWithWorkshop(ctx, userID)
+}
 
-func generateQRCode(userID, workshopID string) (string, error) {
-	data := fmt.Sprintf(`{"user_id":"%s","workshop_id":"%s"}`, userID, workshopID)
-	png, err := qrcode.Encode(data, qrcode.Medium, 256)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(png), nil
+func (s *RegistrationService) GetByWorkshop(ctx context.Context, workshopID string) ([]model.RegistrationWithUser, error) {
+	return s.regRepo.FindByWorkshopWithUser(ctx, workshopID)
 }

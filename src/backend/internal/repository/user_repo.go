@@ -16,11 +16,11 @@ func NewUserRepo(pool *pgxpool.Pool) *UserRepo {
 	return &UserRepo{pool: pool}
 }
 
-func (r *UserRepo) FindByStudentID(ctx context.Context, studentID string) (*model.User, error) {
+func (r *UserRepo) FindByStudentID(ctx context.Context, identifier string) (*model.User, error) {
 	var u model.User
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, student_id, password_hash, full_name, email, phone, role, created_at, updated_at
-		 FROM users WHERE student_id = $1`, studentID,
+		`SELECT id, user_id, password_hash, full_name, email, phone, role, created_at, updated_at
+		 FROM users WHERE user_id = $1 OR email = $1`, identifier,
 	).Scan(&u.ID, &u.StudentID, &u.PasswordHash, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 
 	if err != nil {
@@ -32,7 +32,7 @@ func (r *UserRepo) FindByStudentID(ctx context.Context, studentID string) (*mode
 func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error) {
 	var u model.User
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, student_id, password_hash, full_name, email, phone, role, created_at, updated_at
+		`SELECT id, user_id, password_hash, full_name, email, phone, role, created_at, updated_at
 		 FROM users WHERE id = $1`, id,
 	).Scan(&u.ID, &u.StudentID, &u.PasswordHash, &u.FullName, &u.Email, &u.Phone, &u.Role, &u.CreatedAt, &u.UpdatedAt)
 
@@ -44,9 +44,9 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*model.User, error)
 
 func (r *UserRepo) UpsertFromCSV(ctx context.Context, studentID, passwordHash, fullName, email, phone, role string) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO users (student_id, password_hash, full_name, email, phone, role)
+		`INSERT INTO users (user_id, password_hash, full_name, email, phone, role)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 ON CONFLICT (student_id) DO UPDATE SET
+		 ON CONFLICT (user_id) DO UPDATE SET
 		   full_name = EXCLUDED.full_name,
 		   email = EXCLUDED.email,
 		   phone = EXCLUDED.phone,

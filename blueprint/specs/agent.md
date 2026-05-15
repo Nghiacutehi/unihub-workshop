@@ -330,3 +330,9 @@ type APIResponse<T> = {
 AI cần lưu ý các struct Go tương ứng với:
 - `Workshop`: `id`, `title`, `description`, `speaker_name`, `start_time`, `end_time`, `available_seats`, `total_seats`.
 - `Registration`: `id`, `user_id`, `workshop_id`, `status` (`PENDING`, `CONFIRMED`, `CANCELLED`).
+
+### 10.6. Quy tắc Thời gian (Timezone Rule)
+* **Múi giờ chuẩn:** Toàn bộ hệ thống (Backend & Database) phải sử dụng múi giờ **Việt Nam (ICT - UTC+7)**.
+* **Backend (Go):** Mọi thao tác lấy thời gian hiện tại (`time.Now()`) phải được chuyển sang múi giờ `Asia/Ho_Chi_Minh`. Tránh sử dụng giờ UTC hoặc giờ hệ thống máy chủ nếu máy chủ không đặt tại Việt Nam.
+* **Database (PostgreSQL):** Mọi trường `TIMESTAMP` phải được lưu trữ đồng nhất. Khi khởi tạo kết nối, phải thực hiện lệnh `SET TIMEZONE='Asia/Ho_Chi_Minh'` hoặc cấu hình trong Connection String.
+* **Frontend (TS):** Hiển thị thời gian cho người dùng theo định dạng Việt Nam (`DD/MM/YYYY HH:mm`).
