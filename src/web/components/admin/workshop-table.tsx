@@ -23,11 +23,12 @@ export interface Workshop {
   id: string
   title: string
   speaker: string
-  datetime: string
+  date: string
+  time: string
   capacity: number
   registered: number
   price: number
-  status: "open" | "cancelled" | "completed"
+  status: "PUBLISHED" | "CLOSED" | "DELETED"
 }
 
 interface WorkshopTableProps {

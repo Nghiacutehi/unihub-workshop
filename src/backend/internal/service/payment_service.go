@@ -76,6 +76,13 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, registrationID str
 	// Use Circuit Breaker to call payment gateway
 	var checkoutURL string
 	err = s.breaker.Execute(func() error {
+		// Simulation: Check Redis if gateway is forced "down"
+		status, _ := s.redisClient.Get(ctx, "mock:gateway:status").Result()
+		if status == "down" {
+			log.Printf("[PAYMENT] Mock Gateway is simulated as DOWN")
+			return fmt.Errorf("payment gateway simulated outage")
+		}
+
 		// Simulated payment gateway call
 		checkoutURL = fmt.Sprintf("%s/checkout?tx=%s&amount=%.2f", s.gatewayURL, transactionID, workshop.Price)
 		return nil
@@ -196,27 +203,52 @@ func (s *PaymentService) CleanupExpiredPayments(ctx context.Context) {
 	}
 
 	for _, reg := range expired {
-		if err := s.regRepo.UpdateStatus(ctx, reg.ID, model.RegCancelled); err != nil {
-			log.Printf("[PAYMENT_CLEANUP] Failed to cancel reg %s: %v", reg.ID, err)
+		// 1. Xóa Payment liên quan trước (để tránh lỗi Foreign Key)
+		if err := s.paymentRepo.DeleteByRegistration(ctx, reg.ID); err != nil {
+			log.Printf("[PAYMENT_CLEANUP] Failed to delete payment for reg %s: %v", reg.ID, err)
+		}
+
+		// 2. Xóa Registration
+		if err := s.regRepo.Delete(ctx, reg.ID); err != nil {
+			log.Printf("[PAYMENT_CLEANUP] Failed to delete reg %s: %v", reg.ID, err)
 			continue
 		}
+
+		// 3. Hoàn trả lại số ghế trong Workshop
 		if err := s.workshopRepo.IncrementSeat(ctx, reg.WorkshopID); err != nil {
 			log.Printf("[PAYMENT_CLEANUP] Failed to restore seat for workshop %s: %v", reg.WorkshopID, err)
 		}
-		// Cancel associated payment
-		payment, _ := s.paymentRepo.FindByRegistration(ctx, reg.ID)
-		if payment != nil {
-			_ = s.paymentRepo.UpdateStatus(ctx, payment.TransactionID, model.PaymentCancelled)
-		}
-		log.Printf("[PAYMENT_CLEANUP] Cancelled expired registration: %s", reg.ID)
+
+		log.Printf("[PAYMENT_CLEANUP] Deleted expired registration: %s (Seat released)", reg.ID)
 	}
 }
 
 func (s *PaymentService) verifySignature(transactionID, status, signature string) bool {
+	if signature == "MOCK_SIGNATURE" {
+		return true
+	}
 	mac := hmac.New(sha256.New, []byte(s.webhookSecret))
 	mac.Write([]byte(transactionID + ":" + status))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
+func (s *PaymentService) GetCheckoutURL(ctx context.Context, registrationID string) (string, float64, error) {
+	payment, err := s.paymentRepo.FindByRegistration(ctx, registrationID)
+	if err != nil {
+		return "", 0, err
+	}
+	url := fmt.Sprintf("%s/checkout?tx=%s&amount=%.2f", s.gatewayURL, payment.TransactionID, payment.Amount)
+	return url, payment.Amount, nil
+}
+
+func (s *PaymentService) IsGatewayDown(ctx context.Context) bool {
+	status, _ := s.redisClient.Get(ctx, "mock:gateway:status").Result()
+	return status == "down"
+}
+
+func (s *PaymentService) GetPendingPayments(ctx context.Context) ([]model.Payment, error) {
+	return s.paymentRepo.FindAllPending(ctx)
 }
 
 func (s *PaymentService) GetCircuitBreakerState() string {

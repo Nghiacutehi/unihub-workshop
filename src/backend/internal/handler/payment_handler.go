@@ -54,6 +54,26 @@ func (h *PaymentHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Message: "Webhook processed"})
 }
 
+// GetPendingPayments returns all registrations currently in PENDING_PAYMENT status
+func (h *PaymentHandler) GetPendingPayments(w http.ResponseWriter, r *http.Request) {
+	payments, err := h.paymentService.GetPendingPayments(r.Context())
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Data: payments})
+}
+
+// GetGatewayStatus returns the current up/down status of the mock gateway
+func (h *PaymentHandler) GetGatewayStatus(w http.ResponseWriter, r *http.Request) {
+	isDown := h.paymentService.IsGatewayDown(r.Context())
+	status := "up"
+	if isDown {
+		status = "down"
+	}
+	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Data: map[string]string{"status": status}})
+}
+
 // GetCircuitBreakerStatus returns the current state of the payment circuit breaker
 func (h *PaymentHandler) GetCircuitBreakerStatus(w http.ResponseWriter, r *http.Request) {
 	state := h.paymentService.GetCircuitBreakerState()

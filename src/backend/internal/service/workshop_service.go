@@ -54,7 +54,6 @@ func (s *WorkshopService) Create(ctx context.Context, req *model.CreateWorkshopR
 
 	w := &model.Workshop{
 		Title:          req.Title,
-		Description:    &req.Description,
 		Speaker:        &req.Speaker,
 		Room:           req.Room,
 		StartTime:      startTime,

@@ -208,11 +208,12 @@ type RegistrationStatusResponse struct {
 	Status        RegistrationStatus `json:"status"`
 	Registration  *Registration      `json:"registration,omitempty"`
 	Message       string             `json:"message,omitempty"`
+	PaymentURL    string             `json:"payment_url,omitempty"`
+	PaymentAmount float64            `json:"payment_amount,omitempty"`
 }
 
 type CreateWorkshopRequest struct {
 	Title         string  `json:"title"`
-	Description   string  `json:"description"`
 	Speaker       string  `json:"speaker"`
 	Room          string  `json:"room"`
 	StartTime     string  `json:"start_time"`
@@ -225,7 +226,6 @@ type CreateWorkshopRequest struct {
 
 type UpdateWorkshopRequest struct {
 	Title         *string  `json:"title,omitempty"`
-	Description   *string  `json:"description,omitempty"`
 	Speaker       *string  `json:"speaker,omitempty"`
 	Room          *string  `json:"room,omitempty"`
 	StartTime     *string  `json:"start_time,omitempty"`

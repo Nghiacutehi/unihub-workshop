@@ -47,9 +47,11 @@ func (r *UserRepo) UpsertFromCSV(ctx context.Context, studentID, passwordHash, f
 		`INSERT INTO users (user_id, password_hash, full_name, email, phone, role)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (user_id) DO UPDATE SET
+		   password_hash = EXCLUDED.password_hash,
 		   full_name = EXCLUDED.full_name,
 		   email = EXCLUDED.email,
 		   phone = EXCLUDED.phone,
+		   role = EXCLUDED.role,
 		   updated_at = CURRENT_TIMESTAMP`,
 		studentID, passwordHash, fullName, email, phone, role,
 	)

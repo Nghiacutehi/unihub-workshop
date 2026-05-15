@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { type Workshop } from "./workshop-card"
 import { useRegistration } from "@/hooks/use-registration"
+import { PaymentDialog } from "./payment-dialog"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 
@@ -37,13 +38,36 @@ export function WorkshopDetailDialog({
   onOpenChange
 }: WorkshopDetailDialogProps) {
   const [showMap, setShowMap] = useState(false)
-  const { isRegistering, regStatus, waitingPosition, handleRegister } = useRegistration(workshop.id)
+  const [hasJustRegistered, setHasJustRegistered] = useState(false)
+  const { 
+    isRegistering, 
+    regStatus, 
+    waitingPosition, 
+    handleRegister,
+    showPaymentDialog,
+    setShowPaymentDialog,
+    paymentInfo
+  } = useRegistration(workshop?.id || "")
 
   useEffect(() => {
     if (!open) {
       setShowMap(false)
     }
-  }, [open])
+    
+    // Lắng nghe sự kiện đăng ký thành công cho RIÊNG workshop này
+    const handleSuccess = () => {
+      setHasJustRegistered(true)
+    }
+    const eventName = workshop ? `workshop-reg-success-${workshop.id}` : ''
+    if (eventName) {
+      window.addEventListener(eventName, handleSuccess)
+    }
+    return () => {
+      if (eventName) {
+        window.removeEventListener(eventName, handleSuccess)
+      }
+    }
+  }, [open, workshop?.id])
 
   if (!workshop) return null
 
@@ -70,7 +94,7 @@ export function WorkshopDetailDialog({
         disabled: true 
       }
     }
-    if (workshop.isRegistered) {
+    if (workshop.isRegistered || hasJustRegistered) {
       return { 
         label: "ĐÃ ĐĂNG KÝ", 
         variant: "secondary" as const, 
@@ -207,18 +231,14 @@ export function WorkshopDetailDialog({
               <section className="space-y-6">
                 <div className="flex items-center gap-3 font-black text-2xl text-slate-900">
                   <div className="h-8 w-2 bg-primary rounded-full" />
-                  <h3>Nội dung chi tiết</h3>
+                  <h3>Nội dung & Chương trình</h3>
                 </div>
                 
-                <div className="space-y-6 text-base text-slate-600 leading-loose whitespace-pre-line font-medium bg-slate-50/30 p-8 rounded-3xl border border-slate-100">
-                  {workshop.summary && (
-                    <div className="pb-4 border-b border-slate-200/50 mb-4 italic text-slate-700">
-                      {workshop.summary}
-                    </div>
-                  )}
-                  {workshop.description && <div>{workshop.description}</div>}
-                  {!workshop.summary && !workshop.description && (
-                    <div className="text-slate-400">Đang cập nhật nội dung...</div>
+                <div className="space-y-6 text-lg text-slate-600 leading-relaxed whitespace-pre-line font-medium bg-slate-50/30 p-10 rounded-[2rem] border border-slate-100 shadow-inner">
+                  {workshop.summary ? (
+                    <div>{workshop.summary}</div>
+                  ) : (
+                    <div className="text-slate-400 italic">Đang cập nhật nội dung chương trình...</div>
                   )}
                 </div>
               </section>
@@ -262,6 +282,13 @@ export function WorkshopDetailDialog({
           </div>
         </div>
       </DialogContent>
+      <PaymentDialog
+        open={showPaymentDialog}
+        onOpenChange={setShowPaymentDialog}
+        amount={paymentInfo?.amount || 0}
+        paymentUrl={paymentInfo?.url || ""}
+        workshopTitle={workshop.title}
+      />
       <style dangerouslySetInnerHTML={{ __html: customScrollbarStyles }} />
     </Dialog>
   )

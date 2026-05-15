@@ -61,9 +61,6 @@ export function Navbar() {
                 </div>
               </div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>Vé của tôi</DropdownMenuItem>
-              <DropdownMenuItem>Cài đặt</DropdownMenuItem>
-              <DropdownMenuSeparator />
               <DropdownMenuItem 
                 className="text-destructive focus:bg-destructive/10 focus:text-destructive"
                 onClick={handleLogout}

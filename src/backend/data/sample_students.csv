@@ -1,5 +1,5 @@
 student_id,password,full_name,email,phone,role
-21127010,password123,Nguyễn Văn Khánh,khanh.nguyen@student.edu.vn,0901234010,STUDENT
+21127010,123456,Nguyễn Văn Khánh,khanh.nguyen@student.edu.vn,0901234010,ADMIN
 21127011,password123,Trần Thị Linh,linh.tran@student.edu.vn,0901234011,STUDENT
 21127012,password123,Lê Minh Nhật,nhat.le@student.edu.vn,0901234012,STUDENT
 21127013,password123,Phạm Hoàng Oanh,oanh.pham@student.edu.vn,0901234013,STUDENT

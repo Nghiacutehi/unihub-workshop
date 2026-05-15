@@ -39,7 +39,6 @@ import { api } from "@/lib/api-client"
 
 const workshopSchema = z.object({
   title: z.string().min(2, "Tiêu đề phải ít nhất 2 ký tự"),
-  description: z.string().min(5, "Mô tả phải ít nhất 5 ký tự"),
   speaker: z.string().min(2, "Vui lòng nhập tên diễn giả"),
   room: z.string().min(1, "Vui lòng chọn phòng học"),
   startTime: z.date({
@@ -50,7 +49,7 @@ const workshopSchema = z.object({
   }),
   capacity: z.coerce.number().min(1, "Sức chứa phải lớn hơn 0"),
   price: z.coerce.number().min(0, "Giá vé không được âm"),
-  summary: z.string().optional(),
+  summary: z.string().min(5, "Bản tóm tắt phải ít nhất 5 ký tự"),
   status: z.enum(["PUBLISHED", "CLOSED", "DELETED"]).default("PUBLISHED"),
   roomLayoutUrl: z.string().optional(),
 })
@@ -75,7 +74,6 @@ export function WorkshopForm({ initialData, onSubmit, isEditing = false }: Works
       endTime: initialData.endTime ? new Date(initialData.endTime) : new Date(),
     } : {
       title: "",
-      description: "",
       speaker: "",
       room: "Hội trường 1",
       capacity: 50,
@@ -118,28 +116,27 @@ export function WorkshopForm({ initialData, onSubmit, isEditing = false }: Works
       return
     }
 
-    if (!isEditing) {
-      toast.warning("Vui lòng lưu bản nháp Workshop trước khi sử dụng AI để tóm tắt.")
-      return
-    }
-
     setIsAiProcessing(true)
     const formData = new FormData()
     formData.append("file", file)
 
     try {
-      // Endpoint này đã được định nghĩa trong AdminHandler (UploadPDF)
-      const response = await api.upload<any>(`/api/v1/admin/workshops/${initialData.id}/summary`, formData)
+      // Sử dụng endpoint mới hỗ trợ cả tạo mới và chỉnh sửa
+      const response = await api.upload<any>(`/api/v1/ai/summarize`, formData)
       
       if (response.success && response.data?.summary) {
         form.setValue("summary", response.data.summary)
         toast.success("AI đã phân tích và tóm tắt nội dung thành công!")
+      } else {
+        toast.error(response.message || "Không thể lấy tóm tắt từ AI")
       }
     } catch (error) {
       console.error("AI Analysis error:", error)
-      toast.error("Không thể phân tích PDF. Vui lòng thử lại sau.")
+      toast.error("Không thể phân tích PDF. Vui lòng kiểm tra lại file hoặc thử lại sau.")
     } finally {
       setIsAiProcessing(false)
+      // Reset input file để có thể chọn lại cùng 1 file nếu cần
+      event.target.value = ""
     }
   }
 
@@ -181,29 +178,11 @@ export function WorkshopForm({ initialData, onSubmit, isEditing = false }: Works
 
             <FormField
               control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Mô tả chi tiết</FormLabel>
-                  <FormControl>
-                    <Textarea 
-                      placeholder="Nội dung chi tiết của workshop..." 
-                      className="min-h-[120px]" 
-                      {...field} 
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
               name="summary"
               render={({ field }) => (
                 <FormItem>
                   <div className="flex items-center justify-between mb-2">
-                    <FormLabel className="mb-0">Tóm tắt nội dung (Summary)</FormLabel>
+                    <FormLabel className="mb-0">Nội dung tóm tắt & Chương trình</FormLabel>
                     <div className="relative">
                       <Input
                         type="file"
@@ -232,13 +211,13 @@ export function WorkshopForm({ initialData, onSubmit, isEditing = false }: Works
                   </div>
                   <FormControl>
                     <Textarea 
-                      placeholder="Bản tóm tắt ngắn gọn hoặc sử dụng AI để tạo..." 
-                      className="min-h-[100px] bg-slate-50/50" 
+                      placeholder="Nhập nội dung tóm tắt buổi workshop hoặc sử dụng AI để tạo từ file PDF..." 
+                      className="min-h-[250px] bg-slate-50/30 text-base leading-relaxed" 
                       {...field} 
                     />
                   </FormControl>
                   <FormDescription>
-                    Sử dụng nút AI Assistant để tự động tóm tắt từ file đề án PDF.
+                    Bạn có thể tự nhập nội dung hoặc dùng AI Assistant để tóm tắt từ đề án PDF.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -343,37 +322,59 @@ export function WorkshopForm({ initialData, onSubmit, isEditing = false }: Works
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
                       <FormLabel>Thời gian bắt đầu</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-full pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? (
-                                format(field.value, "HH:mm - dd/MM/yyyy", { locale: vi })
-                              ) : (
-                                <span>Chọn ngày & giờ</span>
-                              )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            disabled={(date) =>
-                              date < new Date(new Date().setHours(0, 0, 0, 0))
-                            }
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
+                      <div className="flex gap-2">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={cn(
+                                  "flex-1 pl-3 text-left font-normal h-12",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                {field.value ? (
+                                  format(field.value, "dd/MM/yyyy", { locale: vi })
+                                ) : (
+                                  <span>Chọn ngày</span>
+                                )}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value}
+                              onSelect={(date) => {
+                                if (date) {
+                                  const current = field.value || new Date()
+                                  date.setHours(current.getHours())
+                                  date.setMinutes(current.getMinutes())
+                                  field.onChange(date)
+                                }
+                              }}
+                              disabled={(date) =>
+                                date < new Date(new Date().setHours(0, 0, 0, 0))
+                              }
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <Input
+                          type="time"
+                          className="w-32 h-12 text-center font-bold"
+                          value={field.value ? format(field.value, "HH:mm") : "08:00"}
+                          onChange={(e) => {
+                            const [hours, minutes] = e.target.value.split(':').map(Number)
+                            const current = field.value || new Date()
+                            const newDate = new Date(current)
+                            newDate.setHours(hours)
+                            newDate.setMinutes(minutes)
+                            field.onChange(newDate)
+                          }}
+                        />
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -385,37 +386,59 @@ export function WorkshopForm({ initialData, onSubmit, isEditing = false }: Works
                   render={({ field }) => (
                     <FormItem className="flex flex-col">
                       <FormLabel>Thời gian kết thúc</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "w-full pl-3 text-left font-normal",
-                                !field.value && "text-muted-foreground"
-                              )}
-                            >
-                              {field.value ? (
-                                format(field.value, "HH:mm - dd/MM/yyyy", { locale: vi })
-                              ) : (
-                                <span>Chọn ngày & giờ</span>
-                              )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value}
-                            onSelect={field.onChange}
-                            disabled={(date) =>
-                              date < (form.getValues("startTime") || new Date())
-                            }
-                            initialFocus
-                          />
-                        </PopoverContent>
-                      </Popover>
+                      <div className="flex gap-2">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={cn(
+                                  "flex-1 pl-3 text-left font-normal h-12",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                {field.value ? (
+                                  format(field.value, "dd/MM/yyyy", { locale: vi })
+                                ) : (
+                                  <span>Chọn ngày</span>
+                                )}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value}
+                              onSelect={(date) => {
+                                if (date) {
+                                  const current = field.value || new Date()
+                                  date.setHours(current.getHours())
+                                  date.setMinutes(current.getMinutes())
+                                  field.onChange(date)
+                                }
+                              }}
+                              disabled={(date) =>
+                                date < (form.getValues("startTime") || new Date())
+                              }
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <Input
+                          type="time"
+                          className="w-32 h-12 text-center font-bold"
+                          value={field.value ? format(field.value, "HH:mm") : "10:00"}
+                          onChange={(e) => {
+                            const [hours, minutes] = e.target.value.split(':').map(Number)
+                            const current = field.value || new Date()
+                            const newDate = new Date(current)
+                            newDate.setHours(hours)
+                            newDate.setMinutes(minutes)
+                            field.onChange(newDate)
+                          }}
+                        />
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}

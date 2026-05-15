@@ -88,17 +88,17 @@ func main() {
 	// Initialize services
 	authService := service.NewAuthService(userRepo, cfg.AuthSecret)
 	workshopService := service.NewWorkshopService(workshopRepo)
-	regService := service.NewRegistrationService(regRepo, workshopRepo, userRepo, rsaProvider, publisher, redisClient, waitingRoom, seatLimiter)
 	paymentService := service.NewPaymentService(paymentRepo, regRepo, workshopRepo, userRepo, rsaProvider, publisher, redisClient, cfg.PaymentWebhookSecret, cfg.PaymentGatewayURL)
+	regService := service.NewRegistrationService(regRepo, workshopRepo, userRepo, paymentService, rsaProvider, publisher, redisClient, waitingRoom, seatLimiter)
 	checkinService := service.NewCheckinService(regRepo)
 
 	// Notification strategies (Strategy + Observer Pattern)
-	emailStrategy := service.NewEmailStrategy(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom, userRepo)
+	emailStrategy := service.NewEmailStrategy(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom, cfg.SMTPUser, cfg.SMTPPass, userRepo)
 	webStrategy := service.NewWebNotificationStrategy()
 	notifService := service.NewNotificationService(notifRepo, emailStrategy, webStrategy)
 
 	batchService := service.NewBatchImportService(importRepo, userRepo, cfg.CSVImportDir, cfg.CSVArchiveDir)
-	aiService := service.NewAISummaryService(workshopRepo, cfg.AIApiURL, cfg.AIApiKey)
+	aiService := service.NewAISummaryService(workshopRepo, cfg.AIApiKey, cfg.GeminiModel, cfg.AITemperature, cfg.AIMaxTokens)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService, rsaProvider)
@@ -108,6 +108,7 @@ func main() {
 	checkinHandler := handler.NewCheckinHandler(checkinService)
 	notifHandler := handler.NewNotificationHandler(notifService)
 	adminHandler := handler.NewAdminHandler(batchService, aiService, userRepo, cfg.CSVImportDir)
+	aiHandler := handler.NewAIHandler(aiService)
 
 	// Initialize rate limiter
 	redisBucket := ratelimiter.NewRedisTokenBucket(redisClient, cfg.RateLimitCapacity, cfg.RateLimitRefillRate, cfg.RateLimitTTL)
@@ -136,6 +137,11 @@ func main() {
 
 	// Payment webhook (public, signature-verified)
 	r.Post("/api/v1/payment/webhook", paymentHandler.Webhook)
+
+	// Mock Gateway Simulation (for testing)
+	mockHandler := handler.NewMockHandler(redisClient)
+	r.Post("/api/v1/mock/payment/toggle", mockHandler.ToggleGatewayStatus)
+	r.Get("/api/v1/mock/payment/status", mockHandler.GetGatewayStatus)
 
 	// Mock payment endpoint for testing
 	r.Get("/mock/payment/checkout", func(w http.ResponseWriter, r *http.Request) {
@@ -195,8 +201,11 @@ func main() {
 			r.Post("/api/v1/admin/import/csv", adminHandler.UploadCSV)
 			r.Get("/api/v1/admin/import/jobs", adminHandler.GetImportJobs)
 			r.Post("/api/v1/admin/workshops/{workshopId}/summary", adminHandler.UploadPDF)
+			r.Post("/api/v1/ai/summarize", aiHandler.SummarizePDF)
 			r.Get("/api/v1/registrations/workshop/{workshopId}", regHandler.GetByWorkshopID)
 			r.Get("/api/v1/admin/stats", adminHandler.GetStats)
+			r.Get("/api/v1/admin/payments/pending", paymentHandler.GetPendingPayments)
+			r.Get("/api/v1/admin/payment/gateway-status", paymentHandler.GetGatewayStatus)
 			r.Get("/api/v1/admin/payment/circuit-breaker", paymentHandler.GetCircuitBreakerStatus)
 		})
 	})

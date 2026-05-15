@@ -66,9 +66,9 @@ func (r *WorkshopRepo) FindByID(ctx context.Context, id string) (*model.Workshop
 
 func (r *WorkshopRepo) Create(ctx context.Context, w *model.Workshop) error {
 	return r.pool.QueryRow(ctx,
-		`INSERT INTO workshops (title, description, speaker, room, start_time, end_time, capacity, available_seats, price, status, summary, room_layout_url)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11) RETURNING id, created_at`,
-		w.Title, w.Description, w.Speaker, w.Room, w.StartTime, w.EndTime, w.Capacity, w.Price, w.Status, w.Summary, w.RoomLayoutURL,
+		`INSERT INTO workshops (title, speaker, room, start_time, end_time, capacity, available_seats, price, status, summary, room_layout_url)
+		 VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10) RETURNING id, created_at`,
+		w.Title, w.Speaker, w.Room, w.StartTime, w.EndTime, w.Capacity, w.Price, w.Status, w.Summary, w.RoomLayoutURL,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
@@ -82,11 +82,6 @@ func (r *WorkshopRepo) Update(ctx context.Context, id string, req *model.UpdateW
 	if req.Title != nil {
 		setClauses = append(setClauses, fmt.Sprintf("title = $%d", argIdx))
 		args = append(args, *req.Title)
-		argIdx++
-	}
-	if req.Description != nil {
-		setClauses = append(setClauses, fmt.Sprintf("description = $%d", argIdx))
-		args = append(args, *req.Description)
 		argIdx++
 	}
 	if req.Speaker != nil {

@@ -59,10 +59,13 @@ export default function ScannerScreen({ currentWorkshop, onClose, onScanSuccess 
 
     try {
       // 3. GIẢI MÃ JSON
+      console.log(`📷 [Scanner] Raw Data: "${data}"`);
       let payload;
       try {
         payload = JSON.parse(data);
+        console.log('📦 [Scanner] Payload parsed:', payload);
       } catch (e) {
+        console.error('❌ [Scanner] JSON Parse Error:', e);
         throw new Error('FORMAT_ERROR');
       }
 
@@ -71,20 +74,26 @@ export default function ScannerScreen({ currentWorkshop, onClose, onScanSuccess 
       const wid = String(payload.wid || '').trim();
       const sig = String(payload.sig || '').trim();
 
-      if (!sid || !wid || !uid || !sig) throw new Error('FORMAT_ERROR');
+      if (!sid || !wid || !uid || !sig) {
+        console.warn('⚠️ [Scanner] Missing required fields in payload');
+        throw new Error('FORMAT_ERROR');
+      }
 
       // 4. XÁC THỰC CHỮ KÝ RSA (OFFLINE)
+      console.log('🔐 [Scanner] Verifying RSA signature...');
       const isAuthentic = await verifyTicket({ sid, uid, wid, sig });
       if (!isAuthentic) {
+        console.error('❌ [Scanner] RSA Signature Verification FAILED!');
         setScanStatus('error');
         setMessage('❌ CHỮ KÝ KHÔNG HỢP LỆ!');
         return;
       }
 
-      console.log(`🔍 [Scanner] Khớp: SV ${sid}, Workshop: ${wid}, UUID: ${uid}`);
+      console.log(`✅ [Scanner] Signature VALID. SV: ${sid}, WS: ${wid}`);
 
       // 4. KIỂM TRA PHÒNG
       if (wid !== currentWorkshop.id) {
+        console.warn(`⚠️ [Scanner] Wrong Workshop. Expected: ${currentWorkshop.id}, Got: ${wid}`);
         setScanStatus('warning');
         const roomName = currentWorkshop.room;
         const displayRoom = (roomName.startsWith('Phòng') || roomName.startsWith('P.')) ? roomName : `Phòng ${roomName}`;
@@ -94,11 +103,13 @@ export default function ScannerScreen({ currentWorkshop, onClose, onScanSuccess 
         // 5. KIỂM TRA QUÉT TRÙNG (OFFLINE)
         const alreadyDone = await isStudentCheckedIn(sid, wid);
         if (alreadyDone) {
+          console.warn(`⚠️ [Scanner] Student ${sid} already checked in!`);
           setScanStatus('warning');
           setMessage(`⚠️ VÉ ĐÃ SỬ DỤNG! (${sid})`);
         } else {
           // 6. LƯU LOCAL
           try {
+            console.log(`💾 [Scanner] Saving check-in for ${sid}...`);
             await saveCheckinLocal({
               id: `${sid}_${Date.now()}`,
               student_id: sid,
@@ -119,6 +130,7 @@ export default function ScannerScreen({ currentWorkshop, onClose, onScanSuccess 
         }
       }
     } catch (e: any) {
+      console.error('🔥 [Scanner] Unexpected Error:', e.message);
       if (e.message === 'FORMAT_ERROR') {
         setScanStatus('error');
         setMessage('❌ MÃ QR KHÔNG HỢP LỆ');
@@ -199,7 +211,7 @@ const styles = StyleSheet.create({
   btnText: { color: 'white', fontWeight: 'bold' },
   banner: {
     position: 'absolute', top: 0, left: 0, right: 0,
-    backgroundColor: '#1E40AF', padding: 20, paddingTop: 50,
+    backgroundColor: '#312E81', padding: 20, paddingTop: 50,
     zIndex: 10, alignItems: 'center'
   },
   bannerLabel: { color: '#BFDBFE', fontSize: 12, fontWeight: '500' },

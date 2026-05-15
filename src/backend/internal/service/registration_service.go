@@ -16,14 +16,16 @@ import (
 )
 
 type RegistrationService struct {
-	regRepo      *repository.RegistrationRepo
-	workshopRepo *repository.WorkshopRepo
-	userRepo     *repository.UserRepo
-	crypto       *crypto.RSAProvider
+	regRepo        *repository.RegistrationRepo
+	workshopRepo   *repository.WorkshopRepo
+	userRepo       *repository.UserRepo
+	paymentService *PaymentService
+	crypto         *crypto.RSAProvider
 	publisher    *queue.Publisher
 	redis        *redis.Client
 	waitingRoom  *ratelimiter.WaitingRoom
 	seatLimiter  *ratelimiter.SeatLimiter
+	gatewayURL   string
 	mu           sync.RWMutex
 	statuses     map[string]*model.RegistrationStatusResponse
 }
@@ -32,6 +34,7 @@ func NewRegistrationService(
 	regRepo *repository.RegistrationRepo,
 	workshopRepo *repository.WorkshopRepo,
 	userRepo *repository.UserRepo,
+	paymentService *PaymentService,
 	cryptoProvider *crypto.RSAProvider,
 	publisher *queue.Publisher,
 	redisClient *redis.Client,
@@ -39,15 +42,16 @@ func NewRegistrationService(
 	seatLimiter *ratelimiter.SeatLimiter,
 ) *RegistrationService {
 	return &RegistrationService{
-		regRepo:      regRepo,
-		workshopRepo: workshopRepo,
-		userRepo:     userRepo,
-		crypto:       cryptoProvider,
-		publisher:    publisher,
-		redis:        redisClient,
-		waitingRoom:  waitingRoom,
-		seatLimiter:  seatLimiter,
-		statuses:     make(map[string]*model.RegistrationStatusResponse),
+		regRepo:        regRepo,
+		workshopRepo:   workshopRepo,
+		userRepo:       userRepo,
+		paymentService: paymentService,
+		crypto:         cryptoProvider,
+		publisher:      publisher,
+		redis:          redisClient,
+		waitingRoom:    waitingRoom,
+		seatLimiter:    seatLimiter,
+		statuses:       make(map[string]*model.RegistrationStatusResponse),
 	}
 }
 
@@ -90,6 +94,11 @@ func (s *RegistrationService) EnqueueRegistration(ctx context.Context, userID, w
 	workshop, err := s.workshopRepo.FindByID(ctx, workshopID)
 	if err != nil {
 		return "", fmt.Errorf("workshop not found: %w", err)
+	}
+
+	// CHECK: Nếu là workshop có phí mà cổng thanh toán đang bảo trì -> Chặn luôn
+	if workshop.Price > 0 && s.paymentService.IsGatewayDown(ctx) {
+		return "", fmt.Errorf("cổng thanh toán đang bảo trì, vui lòng quay lại sau")
 	}
 	
 	if err := s.seatLimiter.PrepareCache(ctx, workshopID, workshop.AvailableSeats); err != nil {
@@ -196,6 +205,14 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	// Nếu là workshop có phí, khởi tạo thanh toán ngay lập tức (ngoài TX để tránh block)
+	if regStatus == model.RegPendingPayment {
+		_, _, err := s.paymentService.InitiatePayment(ctx, reg.ID)
+		if err != nil {
+			log.Printf("[WORKER] Payment initiation failed (gateway down?): %v", err)
+		}
+	}
+
 	log.Printf("[WORKER] Registration finalized: id=%s status=%s", reg.ID, regStatus)
 
 	s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
@@ -226,8 +243,19 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 
 func (s *RegistrationService) GetStatus(correlationID string) *model.RegistrationStatusResponse {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.statuses[correlationID]
+	status := s.statuses[correlationID]
+	s.mu.RUnlock()
+
+	// Nếu trạng thái là PENDING_PAYMENT, lấy thêm thông tin thanh toán
+	if status != nil && status.Status == model.RegPendingPayment && status.Registration != nil {
+		url, amount, err := s.paymentService.GetCheckoutURL(context.Background(), status.Registration.ID)
+		if err == nil {
+			status.PaymentURL = url
+			status.PaymentAmount = amount
+		}
+	}
+
+	return status
 }
 
 func (s *RegistrationService) SetStatus(correlationID string, status *model.RegistrationStatusResponse) {

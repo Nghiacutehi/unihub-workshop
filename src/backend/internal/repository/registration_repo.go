@@ -205,3 +205,7 @@ func (r *RegistrationRepo) FindExpiredPendingPayments(ctx context.Context, minut
 func (r *RegistrationRepo) GetPool() *pgxpool.Pool {
 	return r.pool
 }
+func (r *RegistrationRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM registrations WHERE id = $1`, id)
+	return err
+}

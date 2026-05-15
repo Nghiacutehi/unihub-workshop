@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { api, APIError } from '@/lib/api-client'
 import { toast } from 'sonner'
 
@@ -6,15 +6,59 @@ export function useRegistration(workshopId: string) {
   const [isRegistering, setIsRegistering] = useState(false)
   const [regStatus, setRegStatus] = useState<string | null>(null)
   const [waitingPosition, setWaitingPosition] = useState<number | null>(null)
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false)
+  const [paymentInfo, setPaymentInfo] = useState<{ url: string, amount: number, title: string } | null>(null)
 
+  // Dùng Ref để phá vỡ vòng lặp phụ thuộc giữa handleRegister và pollWaitingRoom
+  const handleRegisterRef = useRef<() => Promise<void>>()
+
+  // 1. Polling Status
+  const pollRegistrationStatus = useCallback(async (correlationId: string) => {
+    const interval = setInterval(async () => {
+      try {
+        const response = await api.get<any>(`/api/v1/registrations/status/${correlationId}`)
+
+        if (response.data?.status !== 'PROCESSING') {
+          clearInterval(interval)
+          setIsRegistering(false)
+          setRegStatus(null)
+
+          if (response.data?.status === 'SUCCESS') {
+            toast.success('Đăng ký thành công! Vui lòng kiểm tra email.')
+            window.dispatchEvent(new CustomEvent('registration-success', { detail: { workshopId } }))
+            window.dispatchEvent(new CustomEvent(`workshop-reg-success-${workshopId}`))
+          } else if (response.data?.status === 'PENDING_PAYMENT') {
+            setPaymentInfo({
+              url: response.data.paymentUrl,
+              amount: response.data.paymentAmount,
+              title: response.data.message || 'Thanh toán đăng ký Workshop'
+            })
+            setShowPaymentDialog(true)
+            toast.info('Vui lòng hoàn tất thanh toán để nhận vé.')
+            window.dispatchEvent(new CustomEvent('registration-success', { detail: { workshopId } }))
+            window.dispatchEvent(new CustomEvent(`workshop-reg-success-${workshopId}`))
+          } else {
+            toast.error(response.data?.message || 'Yêu cầu đăng ký bị từ chối.')
+          }
+        }
+      } catch (error) {
+        console.error('Lỗi Polling Status:', error)
+      }
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [workshopId])
+
+  // 2. Polling Waiting Room
   const pollWaitingRoom = useCallback(async () => {
     const interval = setInterval(async () => {
       try {
         const response = await api.get<any>(`/api/v1/registrations/waiting-room/${workshopId}`)
-        
+
         if (response.data?.status === 1) { // GRANTED
           clearInterval(interval)
-          handleRegister() // Thử đăng ký lại khi đã được cấp quyền
+          if (handleRegisterRef.current) {
+            handleRegisterRef.current()
+          }
         } else if (response.data?.position) {
           setWaitingPosition(response.data.position)
         }
@@ -25,41 +69,16 @@ export function useRegistration(workshopId: string) {
     return () => clearInterval(interval)
   }, [workshopId])
 
-  const pollRegistrationStatus = useCallback(async (correlationId: string) => {
-    const interval = setInterval(async () => {
-      try {
-        const response = await api.get<any>(`/api/v1/registrations/status/${correlationId}`)
-        
-        if (response.data?.status !== 'PROCESSING') {
-          clearInterval(interval)
-          setIsRegistering(false)
-          setRegStatus(null)
-          
-          if (response.data?.status === 'SUCCESS' || response.data?.status === 'PENDING_PAYMENT') {
-            toast.success('Đăng ký thành công! Vui lòng kiểm tra email hoặc mục cá nhân.')
-            // Tự động reload trang hoặc cập nhật UI nếu cần
-            window.location.reload() 
-          } else {
-            toast.error(response.data?.message || 'Yêu cầu đăng ký bị từ chối.')
-          }
-        }
-      } catch (error) {
-        console.error('Lỗi Polling Status:', error)
-      }
-    }, 2000)
-    return () => clearInterval(interval)
-  }, [])
-
+  // 3. Handle Register
   const handleRegister = useCallback(async () => {
     setIsRegistering(true)
     setRegStatus('Đang gửi yêu cầu...')
-    
+
     try {
-      const response = await api.post<any>('/api/v1/registrations', { 
-        workshop_id: workshopId 
+      const response = await api.post<any>('/api/v1/registrations', {
+        workshop_id: workshopId
       })
 
-      // 202 Accepted — Đã vào hàng đợi xử lý
       if (response.data?.correlationId) {
         setRegStatus('Hệ thống đang xử lý...')
         pollRegistrationStatus(response.data.correlationId)
@@ -80,12 +99,20 @@ export function useRegistration(workshopId: string) {
       setIsRegistering(false)
       setRegStatus(null)
     }
-  }, [workshopId, pollWaitingRoom, pollRegistrationStatus])
+  }, [workshopId, pollRegistrationStatus, pollWaitingRoom])
+
+  // Cập nhật ref mỗi khi handleRegister thay đổi
+  useEffect(() => {
+    handleRegisterRef.current = handleRegister
+  }, [handleRegister])
 
   return {
     isRegistering,
     regStatus,
     waitingPosition,
+    showPaymentDialog,
+    setShowPaymentDialog,
+    paymentInfo,
     handleRegister
   }
 }

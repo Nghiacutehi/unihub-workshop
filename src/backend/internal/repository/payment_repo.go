@@ -53,3 +53,27 @@ func (r *PaymentRepo) FindByRegistration(ctx context.Context, registrationID str
 	}
 	return &p, nil
 }
+func (r *PaymentRepo) FindAllPending(ctx context.Context) ([]model.Payment, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, registration_id, transaction_id, amount, provider, status, created_at
+		 FROM payments WHERE status = 'PENDING' ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []model.Payment
+	for rows.Next() {
+		var p model.Payment
+		if err := rows.Scan(&p.ID, &p.RegistrationID, &p.TransactionID, &p.Amount, &p.Provider, &p.Status, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		results = append(results, p)
+	}
+	return results, nil
+}
+
+func (r *PaymentRepo) DeleteByRegistration(ctx context.Context, registrationID string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM payments WHERE registration_id = $1`, registrationID)
+	return err
+}

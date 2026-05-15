@@ -33,13 +33,18 @@ type Config struct {
 	PaymentWebhookSecret string
 
 	// AI
-	AIApiURL string
-	AIApiKey string
+	AIApiURL    string
+	AIApiKey    string
+	GeminiModel string
+	AITemperature float64
+	AIMaxTokens   int
 
 	// SMTP
 	SMTPHost string
 	SMTPPort string
 	SMTPFrom string
+	SMTPUser string
+	SMTPPass string
 
 	// Server
 	ServerPort  string
@@ -78,12 +83,17 @@ func Load() *Config {
 		PaymentGatewayURL:    getEnv("PAYMENT_GATEWAY_URL", "http://localhost:8080/mock/payment"),
 		PaymentWebhookSecret: getEnv("PAYMENT_WEBHOOK_SECRET", "webhook-secret-key"),
 
-		AIApiURL: getEnv("AI_API_URL", "https://api.openai.com/v1/chat/completions"),
-		AIApiKey: getEnv("AI_API_KEY", ""),
+		AIApiURL:    getEnv("AI_API_URL", "https://api.openai.com/v1/chat/completions"),
+		AIApiKey:    getEnv("GEMINI_API_KEY", getEnv("AI_API_KEY", "")),
+		GeminiModel: getEnv("GEMINI_MODEL", "gemini-1.5-flash-lite-preview"),
+		AITemperature: getEnvFloat("AI_TEMPERATURE", 0.4),
+		AIMaxTokens:   getEnvInt("AI_MAX_TOKENS", 800),
 
 		SMTPHost: getEnv("SMTP_HOST", "localhost"),
 		SMTPPort: getEnv("SMTP_PORT", "1025"),
 		SMTPFrom: getEnv("SMTP_FROM", "noreply@unihub.edu.vn"),
+		SMTPUser: getEnv("SMTP_USER", ""),
+		SMTPPass: getEnv("SMTP_PASS", ""),
 
 		ServerPort:  getEnv("SERVER_PORT", "8080"),
 		CORSOrigins: getEnv("CORS_ORIGINS", "http://localhost:3000"),
@@ -108,6 +118,15 @@ func getEnvInt(key string, fallback int) int {
 	if val, ok := os.LookupEnv(key); ok {
 		if i, err := strconv.Atoi(val); err == nil {
 			return i
+		}
+	}
+	return fallback
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	if val, ok := os.LookupEnv(key); ok {
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			return f
 		}
 	}
 	return fallback
