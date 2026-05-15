@@ -291,3 +291,42 @@ Trước khi output bất kỳ đoạn code nào, AI Agent **bắt buộc** ph�
 * Mọi component phải render được mà không crash (không có runtime error khi mount).
 * Cấu trúc thư mục phải **khớp chính xác** với sơ đồ trong mục 3 của tài liệu này.
 * Code phải đọc hiểu được bởi một lập trình viên trung bình trong vòng **30 giây** cho mỗi hàm.
+
+---
+
+## 10. Quy tắc kết nối với Go Backend (Backend Integration)
+
+### 10.1. Cấu hình API và Endpoint
+* **Base URL:** Sử dụng biến môi trường `NEXT_PUBLIC_API_URL` (Web) hoặc `API_URL` (Mobile). Mặc định chạy tại `http://localhost:8080`.
+* **Tiền tố:** Mọi API đều bắt đầu bằng `/api`.
+* **Cấu trúc Backend:** Tham khảo mã nguồn Go tại nhánh `back-end`, thư mục `src/backend`. AI phải đọc `handlers` và `models.go` của Go để đảm bảo khớp kiểu dữ liệu.
+
+### 10.2. Hợp đồng dữ liệu (API Contract)
+Backend sử dụng cấu trúc `APIResponse` chuẩn. AI phải định nghĩa interface tương ứng trong TypeScript:
+```typescript
+type APIResponse<T> = {
+  success: boolean;   // Trạng thái thành công/thất bại
+  data?: T;           // Dữ liệu trả về (nếu có)
+  message?: string;   // Thông báo cho người dùng
+  error?: string;     // Chi tiết lỗi kỹ thuật (chỉ dùng để log/debug)
+};
+```
+
+### 10.3. Quy tắc Map Dữ liệu (Naming Conversion)
+* **Backend (Go):** Sử dụng `snake_case` cho JSON (ví dụ: `workshop_id`, `available_seats`).
+* **Frontend (TS):** AI **bắt buộc** phải map sang `camelCase` (ví dụ: `workshopId`, `availableSeats`) ngay tại tầng API Client để đảm bảo nhất quán với quy tắc đặt tên của Frontend.
+
+### 10.4. Luồng Nghiệp vụ Đặc thù (Patterns)
+* **Đăng ký Workshop (Polling Pattern):**
+  - Khi gửi yêu cầu đăng ký (`POST /api/registrations`), Backend có thể trả về mã `202 Accepted` kèm `correlation_id`.
+  - AI phải triển khai logic **polling** (gọi lại định kỳ) tới endpoint `/api/registrations/status/{correlationId}` để cập nhật trạng thái đăng ký cho người dùng (Thành công/Thất bại/Đang xử lý).
+* **Xác thực (Auth):**
+  - Sử dụng Bearer Token trong Header: `Authorization: Bearer <token>`.
+  - Token được lưu trữ trong `HTTP-only Cookie` (Web) hoặc `SecureStore` (Mobile).
+* **Xử lý Lỗi:**
+  - AI phải ưu tiên hiển thị `message` từ API trả về cho người dùng thay vì thông báo mặc định của Frontend.
+
+### 10.5. Các Models chính cần khớp
+AI cần lưu ý các struct Go tương ứng với:
+- `Workshop`: `id`, `title`, `description`, `speaker_name`, `start_time`, `end_time`, `available_seats`, `total_seats`.
+- `Registration`: `id`, `user_id`, `workshop_id`, `status` (`PENDING`, `CONFIRMED`, `CANCELLED`).
