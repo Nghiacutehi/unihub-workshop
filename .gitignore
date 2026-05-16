@@ -106,3 +106,6 @@ src/backend/data/archive/
 # Keep these specific project files ignored as per origin/back-end
 context project môn học.docx
 context project môn học.pdf
+
+# Sample data files (generated, not source code)
+src/data/samples/*.csv

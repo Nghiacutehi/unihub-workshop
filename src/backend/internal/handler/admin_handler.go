@@ -63,17 +63,36 @@ func (h *AdminHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Process immediately
-	job, err := h.batchService.ProcessCSV(r.Context(), destPath)
+	// Queue for nightly processing (or manual trigger)
+	job, err := h.batchService.QueueJob(r.Context(), header.Filename)
 	if err != nil {
-		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Import failed: %v", err))
+		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to queue job: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, model.APIResponse{
+		Success: true,
+		Message: "CSV uploaded and scheduled for processing at 02:00 AM",
+		Data:    job,
+	})
+}
+
+// RunJob manually triggers a pending import job
+func (h *AdminHandler) RunJob(w http.ResponseWriter, r *http.Request) {
+	jobID := getURLParam(r, "id")
+	if jobID == "" {
+		errorResponse(w, http.StatusBadRequest, "Missing job ID")
+		return
+	}
+
+	if err := h.batchService.RunJobByID(r.Context(), jobID); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, model.APIResponse{
 		Success: true,
-		Message: "CSV imported successfully",
-		Data:    job,
+		Message: "Job execution started in background",
 	})
 }
 
@@ -85,6 +104,22 @@ func (h *AdminHandler) GetImportJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Data: jobs})
+}
+
+// GetImportErrors returns error details for a specific job
+func (h *AdminHandler) GetImportErrors(w http.ResponseWriter, r *http.Request) {
+	jobID := getURLParam(r, "id")
+	if jobID == "" {
+		errorResponse(w, http.StatusBadRequest, "Missing job ID")
+		return
+	}
+
+	errors, err := h.batchService.GetErrors(r.Context(), jobID)
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, "Failed to fetch import errors")
+		return
+	}
+	writeJSON(w, http.StatusOK, model.APIResponse{Success: true, Data: errors})
 }
 
 // UploadPDF handles PDF upload for AI summary generation

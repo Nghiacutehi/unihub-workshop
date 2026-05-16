@@ -15,20 +15,22 @@ import (
 	"unihub-workshop/internal/crypto"
 	"unihub-workshop/internal/model"
 	"unihub-workshop/internal/queue"
+	"unihub-workshop/internal/ratelimiter"
 	"unihub-workshop/internal/repository"
 )
 
 type PaymentService struct {
-	paymentRepo  *repository.PaymentRepo
-	regRepo      *repository.RegistrationRepo
-	workshopRepo *repository.WorkshopRepo
-	userRepo     *repository.UserRepo
-	crypto       *crypto.RSAProvider
-	publisher    *queue.Publisher
-	redisClient  *redis.Client
-	breaker      *circuitbreaker.CircuitBreaker
+	paymentRepo   *repository.PaymentRepo
+	regRepo       *repository.RegistrationRepo
+	workshopRepo  *repository.WorkshopRepo
+	userRepo      *repository.UserRepo
+	crypto        *crypto.RSAProvider
+	publisher     *queue.Publisher
+	redisClient   *redis.Client
+	seatLimiter   *ratelimiter.SeatLimiter
+	breaker       *circuitbreaker.CircuitBreaker
 	webhookSecret string
-	gatewayURL   string
+	gatewayURL    string
 }
 
 func NewPaymentService(
@@ -39,6 +41,7 @@ func NewPaymentService(
 	cryptoProvider *crypto.RSAProvider,
 	publisher *queue.Publisher,
 	redisClient *redis.Client,
+	seatLimiter *ratelimiter.SeatLimiter,
 	webhookSecret, gatewayURL string,
 ) *PaymentService {
 	return &PaymentService{
@@ -49,6 +52,7 @@ func NewPaymentService(
 		crypto:        cryptoProvider,
 		publisher:     publisher,
 		redisClient:   redisClient,
+		seatLimiter:   seatLimiter,
 		breaker:       circuitbreaker.NewCircuitBreaker("payment-gateway", 0.5, 10*time.Second, 30*time.Second),
 		webhookSecret: webhookSecret,
 		gatewayURL:    gatewayURL,
@@ -69,6 +73,16 @@ func (s *PaymentService) InitiatePayment(ctx context.Context, registrationID str
 	workshop, err := s.workshopRepo.FindByID(ctx, reg.WorkshopID)
 	if err != nil {
 		return nil, "", err
+	}
+
+	// ==========================================
+	// IDEMPOTENCY CHECK: Tránh tạo nhiều bản ghi rác
+	// ==========================================
+	existing, err := s.paymentRepo.FindByRegistration(ctx, registrationID)
+	if err == nil && existing.Status == model.PaymentPending {
+		log.Printf("[PAYMENT] Reusing existing pending transaction: tx=%s reg=%s", existing.TransactionID, registrationID)
+		checkoutURL := fmt.Sprintf("%s/checkout?tx=%s&amount=%.2f", s.gatewayURL, existing.TransactionID, existing.Amount)
+		return existing, checkoutURL, nil
 	}
 
 	transactionID := uuid.New().String()
@@ -216,7 +230,14 @@ func (s *PaymentService) CleanupExpiredPayments(ctx context.Context) {
 
 		// 3. Hoàn trả lại số ghế trong Workshop
 		if err := s.workshopRepo.IncrementSeat(ctx, reg.WorkshopID); err != nil {
-			log.Printf("[PAYMENT_CLEANUP] Failed to restore seat for workshop %s: %v", reg.WorkshopID, err)
+			log.Printf("[PAYMENT_CLEANUP] Failed to restore seat in DB for workshop %s: %v", reg.WorkshopID, err)
+		}
+		
+		// 4. Cập nhật lại Cache Redis (Quan trọng để tránh lệch số lượng ghế)
+		if s.seatLimiter != nil {
+			if err := s.seatLimiter.ReleaseSeat(ctx, reg.WorkshopID); err != nil {
+				log.Printf("[PAYMENT_CLEANUP] Failed to restore seat in Redis for workshop %s: %v", reg.WorkshopID, err)
+			}
 		}
 
 		log.Printf("[PAYMENT_CLEANUP] Deleted expired registration: %s (Seat released)", reg.ID)
@@ -253,4 +274,12 @@ func (s *PaymentService) GetPendingPayments(ctx context.Context) ([]model.Paymen
 
 func (s *PaymentService) GetCircuitBreakerState() string {
 	return s.breaker.GetState().String()
+}
+
+func (s *PaymentService) GetStatus(ctx context.Context, transactionID string) (model.PaymentStatus, error) {
+	payment, err := s.paymentRepo.FindByTransactionID(ctx, transactionID)
+	if err != nil {
+		return "", err
+	}
+	return payment.Status, nil
 }

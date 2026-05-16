@@ -47,4 +47,14 @@ Xác thực được thực hiện 100% Offline trên thiết bị của nhân v
 ## 4. Bảo mật Offline
 
 *   Hệ thống ngăn chặn việc sử dụng lại vé (Double Spending) bằng cách lưu lịch sử quét vào **SQLite** nội bộ trên điện thoại.
-*   Khi có mạng trở lại, ứng dụng sẽ đồng bộ toàn bộ lịch sử này về Server để cập nhật trạng thái "Đã tham gia" cho sinh viên.
+## 5. Mã QR Thanh toán (VietQR - Napas 247)
+
+Khác với mã QR vé (Ticket QR) dùng để điểm danh, hệ thống sử dụng mã QR thanh toán động để sinh viên hoàn tất đăng ký Workshop có phí.
+
+*   **Chuẩn:** VietQR (Napas 247).
+*   **Loại:** QR Động (Dynamic QR) - Tự động điền số tiền và nội dung.
+*   **Tham số tích hợp:**
+    *   **Beneficiary:** Ngân hàng đối tác & Số tài khoản của UniHub.
+    *   **Amount:** Lấy trực tiếp từ thuộc tính `price` của Workshop.
+    *   **AddInfo (Nội dung):** Tuân thủ cú pháp `UNIPAY [Transaction_ID]` để hệ thống tự động đối soát Webhook.
+*   **Tích hợp Frontend:** Sử dụng API `vietqr.io` để sinh ảnh QR thời gian thực, đảm bảo tính tiện dụng (quét bằng App ngân hàng bất kỳ).

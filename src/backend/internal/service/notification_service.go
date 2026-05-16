@@ -82,8 +82,13 @@ func buildTitle(eventType, workshopTitle string) string {
 }
 
 func buildContent(event model.NotificationEvent) string {
-	switch event.Type {
-	case "REGISTRATION_SUCCESS":
+	if event.Type == "REGISTRATION_SUCCESS" || event.Type == "PAYMENT_SUCCESS" {
+		isPaid := event.Type == "PAYMENT_SUCCESS"
+		paymentLine := ""
+		if isPaid {
+			paymentLine = `<p style="color: #059669; font-weight: bold; margin-bottom: 20px;">✓ Hệ thống đã xác nhận bạn hoàn tất thanh toán thành công.</p>`
+		}
+
 		return fmt.Sprintf(`
 			<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #334155; line-height: 1.6;">
 				<div style="background: #1e40af; padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
@@ -93,6 +98,8 @@ func buildContent(event model.NotificationEvent) string {
 					<h2 style="color: #0f172a; margin-top: 0;">Chúc mừng bạn!</h2>
 					<p>Bạn đã đăng ký thành công workshop <strong>"%s"</strong>.</p>
 					
+					%s
+
 					<div style="background: #f0f7ff; padding: 20px; border-radius: 8px; border-left: 4px solid #1e40af; margin: 20px 0;">
 						<p style="margin: 0; font-weight: bold; color: #1e40af;">Hướng dẫn lấy mã QR:</p>
 						<p style="margin: 10px 0 0 0; font-size: 14px;">Vì lý do bảo mật, mã QR check-in không được gửi qua email. Vui lòng truy cập vào <strong>Ứng dụng UniHub</strong> hoặc trang web để lấy mã vé của bạn.</p>
@@ -105,10 +112,10 @@ func buildContent(event model.NotificationEvent) string {
 				</div>
 				<p style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 20px;">Đây là email tự động từ UniHub Workshop Management System.</p>
 			</div>
-		`, event.WorkshopTitle)
-	default:
-		return fmt.Sprintf("<p>Bạn có cập nhật mới về workshop <strong>\"%s\"</strong>.</p>", event.WorkshopTitle)
+		`, event.WorkshopTitle, paymentLine)
 	}
+
+	return fmt.Sprintf("<p>Bạn có cập nhật mới về workshop <strong>\"%s\"</strong>.</p>", event.WorkshopTitle)
 }
 
 // ==========================================

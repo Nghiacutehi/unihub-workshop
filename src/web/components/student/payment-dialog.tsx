@@ -12,28 +12,30 @@ import {
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Badge } from "@/components/ui/badge"
+import { api } from "@/lib/api-client"
+import { toast } from "sonner"
 
 interface PaymentDialogProps {
-  isOpen: boolean
-  onClose: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
   amount: number
   paymentUrl: string
   workshopTitle: string
 }
 
-export function PaymentDialog({ isOpen, onClose, amount, paymentUrl, workshopTitle }: PaymentDialogProps) {
+export function PaymentDialog({ open, onOpenChange, amount, paymentUrl, workshopTitle }: PaymentDialogProps) {
   const [timeLeft, setTimeLeft] = useState(900) // 15 minutes in seconds
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!open) return
     
     const timer = setInterval(() => {
       setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0))
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [isOpen])
+  }, [open])
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -47,10 +49,36 @@ export function PaymentDialog({ isOpen, onClose, amount, paymentUrl, workshopTit
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const [isVerifying, setIsVerifying] = useState(false)
+
+  const handleTransferred = () => {
+    setIsVerifying(true)
+    // Hiển thị thông báo ghi nhận ngay lập tức
+    toast.success("Đã ghi nhận thông báo", {
+      id: "payment-recorded",
+      description: "Hệ thống đang kiểm tra giao dịch với ngân hàng. Vé sẽ được cập nhật tự động sau ít phút."
+    })
+    
+    // Đóng dialog sau 1.5 giây để tạo cảm giác hệ thống đang phản hồi
+    setTimeout(() => {
+      setIsVerifying(false)
+      onOpenChange(false)
+    }, 1500)
+  }
+
+  const getTxId = () => {
+    try {
+      const url = new URL(paymentUrl, window.location.origin)
+      return url.searchParams.get("tx")?.slice(0, 8).toUpperCase() || "UNIPAY"
+    } catch {
+      return "UNIPAY"
+    }
+  }
+
   const progress = (timeLeft / 900) * 100
 
   return (
-    <Dialog open={isOpen} onOpenChange={(val) => !val && onClose()}>
+    <Dialog open={open} onOpenChange={(val) => !val && !isVerifying && onOpenChange(false)}>
       <DialogContent className="sm:max-w-[800px] overflow-hidden p-0 rounded-[2rem] border-none shadow-2xl bg-white">
         <div className="bg-primary p-4 text-white text-center shrink-0">
           <DialogTitle className="text-lg font-bold flex items-center justify-center gap-2">
@@ -66,7 +94,7 @@ export function PaymentDialog({ isOpen, onClose, amount, paymentUrl, workshopTit
               <div className="absolute -inset-6 bg-primary/10 rounded-[2.5rem] opacity-50 blur-2xl"></div>
               <div className="relative bg-white p-4 rounded-3xl shadow-sm border border-slate-200">
                 <img 
-                  src="/images/MyQR.jpg" 
+                  src={`https://img.vietqr.io/image/970422-0000000000-compact.png?amount=${amount}&addInfo=UNIPAY%20${getTxId()}`} 
                   alt="Payment QR" 
                   className="w-72 h-72 object-contain rounded-lg"
                 />
@@ -84,7 +112,21 @@ export function PaymentDialog({ isOpen, onClose, amount, paymentUrl, workshopTit
                 <Badge variant="outline" className="text-primary border-primary/20 bg-primary/5 mb-2 px-3 py-1 text-[10px] font-bold">
                   Nội dung chuyển khoản
                 </Badge>
-                <h3 className="text-xl font-black text-slate-900 leading-tight line-clamp-2 tracking-tight">
+                <div className="flex items-center justify-between p-4 rounded-2xl bg-primary text-white shadow-xl shadow-primary/20 mb-2 group border border-white/10">
+                  <span className="text-xl font-mono font-black tracking-widest text-white group-hover:text-indigo-100 transition-colors">
+                    {getTxId()}
+                  </span>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(getTxId())
+                      toast.success("Đã sao chép mã nội dung")
+                    }}
+                    className="p-2 hover:bg-white/20 rounded-xl transition-colors text-white"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
+                </div>
+                <h3 className="text-sm font-bold text-slate-500 leading-tight line-clamp-1">
                   {workshopTitle}
                 </h3>
               </div>
@@ -127,22 +169,18 @@ export function PaymentDialog({ isOpen, onClose, amount, paymentUrl, workshopTit
 
             <div className="space-y-3 mt-8">
               <Button 
-                className="w-full h-14 rounded-2xl font-black text-lg bg-primary hover:bg-primary/90 text-white shadow-xl shadow-primary/20 transition-all hover:-translate-y-1 active:translate-y-0"
-                onClick={onClose}
+                className="w-full h-14 rounded-2xl font-black text-lg bg-primary hover:bg-primary/90 text-white shadow-xl shadow-primary/20 transition-all hover:-translate-y-1 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleTransferred}
+                disabled={isVerifying}
               >
-                Tôi đã chuyển khoản
+                {isVerifying ? (
+                  <div className="flex items-center gap-2">
+                    <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Đang kiểm tra...
+                  </div>
+                ) : "Tôi đã chuyển khoản"}
               </Button>
               
-              {paymentUrl && (
-                <Button 
-                  variant="outline"
-                  className="w-full h-12 rounded-xl font-bold border-primary/20 text-primary hover:bg-primary/5 transition-all flex items-center gap-2"
-                  onClick={() => window.open(paymentUrl, '_blank')}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Thanh toán qua cổng
-                </Button>
-              )}
             </div>
           </div>
         </div>

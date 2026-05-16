@@ -24,27 +24,33 @@ export function useRegistration(workshopId: string) {
           setRegStatus(null)
 
           if (response.data?.status === 'SUCCESS') {
-            toast.success('Đăng ký thành công! Vui lòng kiểm tra email.')
+            toast.success('Đăng ký thành công!', {
+              id: `reg-success-${workshopId}`,
+              description: 'Vui lòng kiểm tra email để nhận thông tin vé và hướng dẫn tham gia.'
+            })
             window.dispatchEvent(new CustomEvent('registration-success', { detail: { workshopId } }))
             window.dispatchEvent(new CustomEvent(`workshop-reg-success-${workshopId}`))
           } else if (response.data?.status === 'PENDING_PAYMENT') {
+            // Không hiện toast ở đây vì QR dialog sẽ hiện ra
             setPaymentInfo({
               url: response.data.paymentUrl,
               amount: response.data.paymentAmount,
               title: response.data.message || 'Thanh toán đăng ký Workshop'
             })
             setShowPaymentDialog(true)
-            toast.info('Vui lòng hoàn tất thanh toán để nhận vé.')
             window.dispatchEvent(new CustomEvent('registration-success', { detail: { workshopId } }))
             window.dispatchEvent(new CustomEvent(`workshop-reg-success-${workshopId}`))
           } else {
-            toast.error(response.data?.message || 'Yêu cầu đăng ký bị từ chối.')
+            toast.error('Yêu cầu bị từ chối', {
+              id: `reg-error-${workshopId}`,
+              description: response.data?.message || 'Không thể hoàn tất đăng ký lúc này.'
+            })
           }
         }
       } catch (error) {
         console.error('Lỗi Polling Status:', error)
       }
-    }, 2000)
+    }, 500)
     return () => clearInterval(interval)
   }, [workshopId])
 
@@ -83,18 +89,24 @@ export function useRegistration(workshopId: string) {
         setRegStatus('Hệ thống đang xử lý...')
         pollRegistrationStatus(response.data.correlationId)
       }
-    } catch (error) {
-      if (error instanceof APIError) {
-        if (error.status === 401) {
-          toast.error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.')
-        } else if (error.status === 429) {
-          setRegStatus('Đang trong phòng chờ...')
-          pollWaitingRoom()
-        } else {
-          toast.error(error.message || 'Đăng ký thất bại')
-        }
+    } catch (error: any) {
+      const errorMsg = error.message || ""
+      
+      if (errorMsg.includes("bảo trì") || errorMsg.includes("maintenance") || errorMsg.includes("outage") || errorMsg.includes("circuit breaker")) {
+        toast.error('Cổng thanh toán đang bảo trì', {
+          id: `reg-maint-${workshopId}`,
+          description: 'Hệ thống thanh toán hiện đang bảo trì để nâng cấp. Vui lòng quay lại sau ít phút.'
+        })
+      } else if (error.status === 401) {
+        toast.error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', { id: 'auth-error' })
+      } else if (error.status === 429) {
+        setRegStatus('Đang trong phòng chờ...')
+        pollWaitingRoom()
       } else {
-        toast.error(error instanceof Error ? error.message : 'Lỗi kết nối hệ thống')
+        toast.error('Đăng ký thất bại', {
+          id: `reg-error-${workshopId}`,
+          description: errorMsg || 'Vui lòng thử lại sau.'
+        })
       }
       setIsRegistering(false)
       setRegStatus(null)

@@ -36,7 +36,7 @@ interface Registration {
 
 import { useNotifications, Notification } from "@/hooks/use-notifications"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useToast } from "@/components/ui/use-toast"
+import { toast } from "sonner"
 
 export function NotificationBell() {
   const [registrations, setRegistrations] = useState<Registration[]>([])
@@ -44,7 +44,6 @@ export function NotificationBell() {
   const [selectedTicket, setSelectedTicket] = useState<Registration | null>(null)
   const [isQRModalOpen, setIsQRModalOpen] = useState(false)
   const { notifications, loading: loadingNotifs, unreadCount } = useNotifications()
-  const { toast: uiToast } = useToast()
   const [paymentInfo, setPaymentInfo] = useState<{ amount: number; url: string; title: string } | null>(null)
   const [showPaymentDialog, setShowPaymentDialog] = useState(false)
 
@@ -87,13 +86,12 @@ export function NotificationBell() {
       // Chỉ show toast nếu thông báo mới (trong vòng 1 phút)
       const isNew = new Date().getTime() - new Date(latest.createdAt).getTime() < 60000
       if (isNew && latest.status === 'SENT') {
-        uiToast({
-          title: latest.title,
+        toast.info(latest.title, {
           description: "Vui lòng kiểm tra hộp thư hoặc danh sách thông báo.",
         })
       }
     }
-  }, [notifications, uiToast])
+  }, [notifications])
 
   const openQR = (reg: Registration) => {
     setSelectedTicket(reg)
@@ -103,6 +101,7 @@ export function NotificationBell() {
   const handlePayResume = async (reg: Registration) => {
     try {
       const res = await api.post<any>(`/api/v1/payments/${reg.id}`)
+      
       if (res.success && res.data) {
         setPaymentInfo({
           amount: res.data.payment.amount,
@@ -111,11 +110,16 @@ export function NotificationBell() {
         })
         setShowPaymentDialog(true)
       }
-    } catch (err) {
-      uiToast({
-        title: "Lỗi",
-        description: "Không thể lấy thông tin thanh toán. Vui lòng thử lại.",
-      })
+    } catch (error: any) {
+      const errorMsg = error.message || ""
+      
+      if (errorMsg.includes("bảo trì") || errorMsg.includes("maintenance") || errorMsg.includes("outage") || errorMsg.includes("circuit breaker")) {
+        toast.error('Cổng thanh toán đang bảo trì', {
+          description: 'Hệ thống thanh toán hiện đang bảo trì để nâng cấp. Vui lòng quay lại sau ít phút.'
+        })
+      } else {
+        toast.error(errorMsg || 'Thanh toán thất bại')
+      }
     }
   }
 
@@ -351,8 +355,8 @@ export function NotificationBell() {
       </Dialog>
       {/* Payment Dialog */}
       <PaymentDialog 
-        isOpen={showPaymentDialog}
-        onClose={() => setShowPaymentDialog(false)}
+        open={showPaymentDialog}
+        onOpenChange={setShowPaymentDialog}
         amount={paymentInfo?.amount || 0}
         paymentUrl={paymentInfo?.url || ""}
         workshopTitle={paymentInfo?.title || ""}

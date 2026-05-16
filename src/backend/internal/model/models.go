@@ -64,6 +64,7 @@ type Workshop struct {
 type RegistrationStatus string
 
 const (
+	RegProcessing     RegistrationStatus = "PROCESSING"
 	RegPendingPayment RegistrationStatus = "PENDING_PAYMENT"
 	RegSuccess        RegistrationStatus = "SUCCESS"
 	RegFailed         RegistrationStatus = "FAILED"
@@ -160,6 +161,7 @@ type Notification struct {
 type ImportJobStatus string
 
 const (
+	ImportPending    ImportJobStatus = "PENDING"
 	ImportProcessing ImportJobStatus = "PROCESSING"
 	ImportCompleted  ImportJobStatus = "COMPLETED"
 	ImportFailed     ImportJobStatus = "FAILED"

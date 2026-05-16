@@ -88,7 +88,7 @@ func main() {
 	// Initialize services
 	authService := service.NewAuthService(userRepo, cfg.AuthSecret)
 	workshopService := service.NewWorkshopService(workshopRepo)
-	paymentService := service.NewPaymentService(paymentRepo, regRepo, workshopRepo, userRepo, rsaProvider, publisher, redisClient, cfg.PaymentWebhookSecret, cfg.PaymentGatewayURL)
+	paymentService := service.NewPaymentService(paymentRepo, regRepo, workshopRepo, userRepo, rsaProvider, publisher, redisClient, seatLimiter, cfg.PaymentWebhookSecret, cfg.PaymentGatewayURL)
 	regService := service.NewRegistrationService(regRepo, workshopRepo, userRepo, paymentService, rsaProvider, publisher, redisClient, waitingRoom, seatLimiter)
 	checkinService := service.NewCheckinService(regRepo)
 
@@ -180,6 +180,7 @@ func main() {
 			r.Get("/api/v1/registrations/status/{correlationId}", regHandler.GetStatus)
 			r.Get("/api/v1/registrations/my", regHandler.MyRegistrations)
 			r.Post("/api/v1/payments/{registrationId}", paymentHandler.InitiatePayment)
+			r.Get("/api/v1/payments/status/{transactionId}", paymentHandler.GetPaymentStatus)
 		})
 
 		// Staff routes (check-in)
@@ -200,6 +201,8 @@ func main() {
 
 			r.Post("/api/v1/admin/import/csv", adminHandler.UploadCSV)
 			r.Get("/api/v1/admin/import/jobs", adminHandler.GetImportJobs)
+			r.Get("/api/v1/admin/import/jobs/{id}/errors", adminHandler.GetImportErrors)
+			r.Post("/api/v1/admin/import/jobs/{id}/run", adminHandler.RunJob)
 			r.Post("/api/v1/admin/workshops/{workshopId}/summary", adminHandler.UploadPDF)
 			r.Post("/api/v1/ai/summarize", aiHandler.SummarizePDF)
 			r.Get("/api/v1/registrations/workshop/{workshopId}", regHandler.GetByWorkshopID)
@@ -368,8 +371,14 @@ func startBatchImportScheduler(ctx context.Context, batchService *service.BatchI
 			return
 		default:
 			now := time.Now()
-			next := time.Date(now.Year(), now.Month(), now.Day()+1, 2, 0, 0, 0, now.Location())
+			// Calculate next 02:00 AM
+			next := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, now.Location())
+			if now.After(next) {
+				next = next.Add(24 * time.Hour)
+			}
+			
 			duration := next.Sub(now)
+			log.Printf("[WORKER] Next batch import scheduled in %v (at %v)", duration.Round(time.Second), next.Format("15:04:05"))
 
 			timer := time.NewTimer(duration)
 			select {

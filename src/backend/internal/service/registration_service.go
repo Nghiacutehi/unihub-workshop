@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -127,6 +128,14 @@ func (s *RegistrationService) EnqueueRegistration(ctx context.Context, userID, w
 	}
 
 	log.Printf("[REGISTRATION] Enqueued: correlation=%s user=%s workshop=%s", correlationID, userID, workshopID)
+	
+	// Khởi tạo trạng thái PROCESSING ngay khi Enqueue thành công để tránh lỗi 404 ở Client
+	s.SetStatus(correlationID, &model.RegistrationStatusResponse{
+		CorrelationID: correlationID,
+		Status:        model.RegProcessing,
+		Message:       "Đang chờ xử lý trong hàng đợi...",
+	})
+
 	return correlationID, nil
 }
 
@@ -182,6 +191,24 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 	}
 
 	if err := s.regRepo.Create(ctx, tx, reg); err != nil {
+		tx.Rollback(ctx)
+		
+		// Xử lý lỗi trùng lặp (Idempotency)
+		if strings.Contains(err.Error(), "uq_user_workshop") {
+			log.Printf("[WORKER] Duplicate registration attempt: user=%s workshop=%s", msg.UserID, msg.WorkshopID)
+			s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
+				CorrelationID: msg.CorrelationID,
+				Status:        model.RegFailed,
+				Message:       "Bạn đã đăng ký Workshop này rồi.",
+			})
+			return nil // Trả về nil để ACK tin nhắn, không retry nữa
+		}
+
+		s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
+			CorrelationID: msg.CorrelationID,
+			Status:        model.RegFailed,
+			Message:       "Lỗi hệ thống khi lưu bản ghi đăng ký",
+		})
 		return fmt.Errorf("failed to create registration: %w", err)
 	}
 
@@ -205,11 +232,16 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Nếu là workshop có phí, khởi tạo thanh toán ngay lập tức (ngoài TX để tránh block)
+	// Nếu là workshop có phí, khởi tạo thanh toán ngay lập tức
+	var paymentURL string
+	var paymentAmount float64
 	if regStatus == model.RegPendingPayment {
-		_, _, err := s.paymentService.InitiatePayment(ctx, reg.ID)
+		pay, url, err := s.paymentService.InitiatePayment(ctx, reg.ID)
 		if err != nil {
-			log.Printf("[WORKER] Payment initiation failed (gateway down?): %v", err)
+			log.Printf("[WORKER] Payment initiation failed: %v", err)
+		} else {
+			paymentURL = url
+			paymentAmount = pay.Amount
 		}
 	}
 
@@ -220,6 +252,8 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 		Status:        regStatus,
 		Registration:  reg,
 		Message:       fmt.Sprintf("Registration %s", regStatus),
+		PaymentURL:    paymentURL,
+		PaymentAmount: paymentAmount,
 	})
 
 	// If free workshop, publish notification event

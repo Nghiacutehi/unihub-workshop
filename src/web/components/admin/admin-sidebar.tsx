@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { 
   LayoutDashboard, 
   CalendarRange, 
-  History, 
+  Database, 
   Settings, 
   ChevronRight,
   Sparkles
@@ -25,9 +25,9 @@ const navItems = [
     icon: CalendarRange 
   },
   { 
-    name: 'Nhật ký Import', 
-    href: '/admin/import-logs', 
-    icon: History 
+    name: 'Trung tâm Dữ liệu', 
+    href: '/admin/data-sync', 
+    icon: Database 
   },
   { 
     name: 'Cài đặt', 

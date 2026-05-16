@@ -63,15 +63,28 @@ sequenceDiagram
     end
 ```
 
-## 4. Các trạng thái Đăng ký
-1.  **WAITING:** Đang trong phòng chờ ảo (Chưa có ghế).
-2.  **PROCESSING:** Đã có ghế tạm thời, đang đợi Worker ghi vào DB.
-3.  **SUCCESS:** Đăng ký thành công hoàn toàn.
-4.  **FAILED:** Bị từ chối (Hết chỗ thực tế, đã đăng ký trước đó, lỗi hệ thống).
+## 4. Quy trình xử lý Thanh toán (Đối với Workshop có phí)
 
-## 5. Quy tắc Thời gian (Timezone)
+1.  **Chốt chặn Pending**: Khi Worker xử lý một Workshop có phí, thay vì tạo trạng thái `SUCCESS`, nó sẽ tạo bản ghi đăng ký với trạng thái `PENDING_PAYMENT`.
+2.  **Khởi tạo Giao dịch**: Worker tự động gọi `PaymentService` để sinh mã giao dịch duy nhất (Transaction ID) và tạo bản ghi thanh toán chờ.
+3.  **Hiển thị QR**: Frontend polling nhận trạng thái `PENDING_PAYMENT` và tự động hiển thị **Payment Dialog** với mã VietQR động chứa đúng số tiền và nội dung chuyển khoản.
+4.  **Xác nhận qua Webhook**: 
+    *   Hệ thống nhận Webhook từ ngân hàng/sandbox.
+    *   Xác minh chữ ký bảo mật (HMAC/RSA).
+    *   Cập nhật đăng ký sang `SUCCESS`.
+    *   Kích hoạt gửi Email thông báo thành công.
+
+## 5. Các trạng thái Đăng ký (Updated)
+1.  **WAITING:** Đang trong phòng chờ ảo (Chưa có ghế).
+2.  **PROCESSING:** Đã có ghế tạm thời, đang đợi Worker ghi vào DB (Trạng thái này giúp tránh lỗi 404 khi Client polling).
+3.  **PENDING_PAYMENT:** Đã ghi nhận đăng ký nhưng chờ thanh toán (Giữ chỗ trong 15 phút).
+4.  **SUCCESS:** Đăng ký thành công hoàn toàn (Đã có vé).
+5.  **FAILED/REJECTED:** Bị từ chối (Hết chỗ thực tế, đã đăng ký trước đó, lỗi hệ thống).
+
+## 6. Quy tắc Thời gian và TTL (Timezone & Cleanup)
 *   Toàn bộ hệ thống sử dụng múi giờ **Asia/Ho_Chi_Minh (UTC+7)**.
-*   Cấu hình đồng nhất tại: `main.go` (`time.Local`), Connection String của Postgres (`timezone=Asia/Ho_Chi_Minh`) và `agent.md`.
+*   **Thanh toán TTL:** Đơn đăng ký chờ thanh toán có thời hạn **15 phút**. 
+*   **Cơ chế dọn dẹp:** Một Worker định kỳ sẽ xóa các đơn hết hạn, đồng thời thực hiện **Hoàn trả ghế (Release Seat)** cho cả Database và Redis Cache.
 
 ---
 *Tài liệu này là Nguồn sự thật (Source of Truth) cho mô-đun Đăng ký của UniHub Workshop.*

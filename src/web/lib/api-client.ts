@@ -157,8 +157,7 @@ async function fetchAPI<T = unknown>(
 
     return converted
   } catch (error) {
-    // Log lỗi chi tiết để debug (Agent.md section 4.4)
-    console.error(`[API Client Error] ${method} ${endpoint}:`, error)
+    // Log lỗi chi tiết để debug (đã ẩn theo yêu cầu người dùng)
     
     if (error instanceof APIError) throw error
     

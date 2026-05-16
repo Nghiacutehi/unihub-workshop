@@ -82,3 +82,18 @@ func (h *PaymentHandler) GetCircuitBreakerStatus(w http.ResponseWriter, r *http.
 		Data:    map[string]string{"circuit_breaker_state": state},
 	})
 }
+
+// GetPaymentStatus returns the current status of a transaction
+func (h *PaymentHandler) GetPaymentStatus(w http.ResponseWriter, r *http.Request) {
+	txID := getURLParam(r, "transactionId")
+	status, err := h.paymentService.GetStatus(r.Context(), txID)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, "Transaction not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, model.APIResponse{
+		Success: true,
+		Data:    map[string]string{"status": string(status)},
+	})
+}

@@ -8,10 +8,10 @@ Tài liệu tổng hợp kết quả audit giữa Đặc tả kiến trúc (Blue
 | :--- | :--- | :--- | :--- |
 | **High Concurrency Registration** | `registration_flow.md` | ✅ Xong | Đã triển khai Double-Check (Redis), Waiting Room, RabbitMQ và Pessimistic Locking. |
 | **AI Summary (Pipe-and-Filter)** | `ai_summary.md` | ✅ Xong | Pipeline trích xuất PDF -> Clean -> Gemini -> DB. |
-| **Payment Gateway Integration** | `payment.md` | ✅ Xong | Mock Gateway, Webhook signature, Idempotency (Redis) và Circuit Breaker. |
+| **Payment Gateway Integration** | `payment.md` | ✅ Xong | Đã tích hợp VietQR động, Webhook signature, Idempotency và Cơ chế dọn dẹp TTL (15p). |
 | **Offline Check-in Protocol** | `mobile_offline_protocol.md` | ✅ Xong | RSA Signing (Backend), Mobile Verify (RSA + SQLite), Bulk Sync API. |
-| **Batch Import (CSV)** | `batch_import.md` | ✅ Xong | Pipeline ETL xử lý hàng ngàn bản ghi sinh viên từ CSV. |
-| **Notification System** | `design.md` (Observer) | ✅ Xong | Strategy Pattern (Email, Web) kết hợp RabbitMQ worker. |
+| **Batch Import (CSV)** | `batch_import.md` | ✅ Xong | Pipeline ETL xử lý hàng ngàn bản ghi sinh viên từ CSV, High-Performance Bulk Upsert và Error Diagnosis. |
+| **Notification System** | `design.md` (Observer) | ✅ Xong | Đã đồng bộ Email Template (Premium) cho cả Workshop miễn phí và có phí. |
 | **Rate Limiting** | `ratelimiter.md` | ✅ Xong | Multi-level Token Bucket (Local + Redis). |
 | **Circuit Breaker** | `circuit_breaker.md` | ✅ Xong | Tự động ngắt mạch cho AI & Payment Gateway. |
 | **RSA Security** | `security_rsa.md` | ✅ Xong | Quy trình ký số, đồng bộ Public Key và Rotate Key. |
@@ -25,7 +25,7 @@ Tài liệu tổng hợp kết quả audit giữa Đặc tả kiến trúc (Blue
 Dựa trên đề bài và mục tiêu dự án, các phần sau cần được bổ sung:
 
 
-    - Giao diện Admin cho việc quản lý Import Jobs và xem lỗi CSV cần được làm "premium" hơn (hiện tại mới có API).
+    - (Đã hoàn thành: Trung tâm Điều phối Dữ liệu đã có UI Premium).
 
 ## 4. Kế hoạch tiếp theo (Next Steps)
 

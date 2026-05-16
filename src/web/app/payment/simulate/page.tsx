@@ -71,6 +71,7 @@ export default function PaymentSimulationPage() {
 
   const simulateSuccess = async (txID: string) => {
     setLoading(true)
+    setSelectedTx(txID)
     try {
       await api.post("/api/v1/payment/webhook", {
         transaction_id: txID,
@@ -79,7 +80,7 @@ export default function PaymentSimulationPage() {
       })
       toast.success("Thanh toán thành công! Webhook đã được gửi.")
       setStats(prev => ({ ...prev, success: prev.success + 1 }))
-      if (selectedTx === txID) setSelectedTx(null)
+      setSelectedTx(null)
     } catch (err) {
       toast.error("Lỗi khi gửi xác nhận thanh toán")
     } finally {
@@ -224,11 +225,11 @@ export default function PaymentSimulationPage() {
                           <td className="px-8 py-6 text-right">
                             <Button 
                               size="sm"
-                              className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-[10px] font-black uppercase tracking-widest px-6 h-10 shadow-lg shadow-indigo-600/20"
+                              className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-[10px] font-black uppercase tracking-widest px-6 h-10 shadow-lg shadow-indigo-600/20 disabled:opacity-50 disabled:grayscale transition-all"
                               onClick={() => simulateSuccess(p.transactionId)}
                               disabled={loading || gatewayStatus === 'down'}
                             >
-                              Confirm Payment
+                              {loading && selectedTx === p.transactionId ? "Confirming..." : "Confirm Payment"}
                             </Button>
                           </td>
                         </tr>

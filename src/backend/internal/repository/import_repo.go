@@ -57,6 +57,26 @@ func (r *ImportRepo) FindAllJobs(ctx context.Context) ([]model.ImportJob, error)
 	return jobs, nil
 }
 
+func (r *ImportRepo) FindErrorsByJobID(ctx context.Context, jobID string) ([]model.ImportError, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, job_id, row_number, raw_data, error_reason
+		 FROM import_errors WHERE job_id=$1 ORDER BY row_number ASC`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var errors []model.ImportError
+	for rows.Next() {
+		var e model.ImportError
+		if err := rows.Scan(&e.ID, &e.JobID, &e.RowNumber, &e.RawData, &e.ErrorReason); err != nil {
+			return nil, err
+		}
+		errors = append(errors, e)
+	}
+	return errors, nil
+}
+
 func (r *ImportRepo) GetPool() *pgxpool.Pool {
 	return r.pool
 }

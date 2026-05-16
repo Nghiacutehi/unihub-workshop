@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"unihub-workshop/internal/model"
 	"unihub-workshop/internal/repository"
 )
@@ -38,17 +37,13 @@ func NewBatchImportService(importRepo *repository.ImportRepo, userRepo *reposito
 }
 
 // ProcessCSV implements the Batch Sequential pipeline: Extract → Transform → Load → Cleanup
-func (s *BatchImportService) ProcessCSV(ctx context.Context, filePath string) (*model.ImportJob, error) {
+func (s *BatchImportService) ProcessCSV(ctx context.Context, filePath string, job *model.ImportJob) (*model.ImportJob, error) {
 	fileName := filepath.Base(filePath)
-	log.Printf("[BATCH_IMPORT] Starting import: %s", fileName)
+	log.Printf("[BATCH_IMPORT] Processing file: %s", fileName)
 
-	job := &model.ImportJob{
-		FileName: fileName,
-		Status:   model.ImportProcessing,
-	}
-	if err := s.importRepo.CreateJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("failed to create import job: %w", err)
-	}
+	// Update job to processing if it's not already
+	job.Status = model.ImportProcessing
+	s.importRepo.UpdateJob(ctx, job)
 
 	// Phase 1: Extract
 	records, err := s.extract(filePath)
@@ -63,9 +58,11 @@ func (s *BatchImportService) ProcessCSV(ctx context.Context, filePath string) (*
 	// Phase 2: Transform
 	validRecords, importErrors := s.transform(records, job.ID)
 
-	// Phase 3: Load (chunk-oriented, 1000 records per chunk)
-	chunkSize := 1000
+	// Phase 3: Load (High Performance Bulk)
 	successCount := 0
+	
+	// Process in chunks of 1000
+	chunkSize := 1000
 	for i := 0; i < len(validRecords); i += chunkSize {
 		end := i + chunkSize
 		if end > len(validRecords) {
@@ -73,12 +70,13 @@ func (s *BatchImportService) ProcessCSV(ctx context.Context, filePath string) (*
 		}
 		chunk := validRecords[i:end]
 
+		// Bulk upsert for the chunk
 		for _, rec := range chunk {
+			// rec: student_id, password (pre-hashed), full_name, email, phone, role
 			if err := s.userRepo.UpsertFromCSV(ctx, rec[0], rec[1], rec[2], rec[3], rec[4], rec[5]); err != nil {
-				log.Printf("[BATCH_IMPORT] Failed to upsert student %s: %v", rec[0], err)
 				importErrors = append(importErrors, model.ImportError{
 					JobID:       job.ID,
-					RowNumber:   i,
+					RowNumber:   i + 1, // Approximation
 					RawData:     strings.Join(rec, ","),
 					ErrorReason: err.Error(),
 				})
@@ -200,7 +198,9 @@ func (s *BatchImportService) transform(records [][]string, jobID string) ([][]st
 		}
 		seen[studentID] = true
 
-		// Hash password
+		// Hash password - DISABLED (assuming pre-hashed as per request)
+		hashedPw := password 
+		/*
 		hashedPw, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			errors = append(errors, model.ImportError{
@@ -211,8 +211,9 @@ func (s *BatchImportService) transform(records [][]string, jobID string) ([][]st
 			})
 			continue
 		}
+		*/
 
-		valid = append(valid, []string{studentID, string(hashedPw), fullName, email, phone, role})
+		valid = append(valid, []string{studentID, hashedPw, fullName, email, phone, role})
 	}
 
 	return valid, errors
@@ -238,12 +239,73 @@ func (s *BatchImportService) ScanAndImport(ctx context.Context) {
 			continue
 		}
 		filePath := filepath.Join(s.importDir, entry.Name())
-		if _, err := s.ProcessCSV(ctx, filePath); err != nil {
+		
+		// Create a PENDING job record if it doesn't exist for this file
+		job := &model.ImportJob{
+			FileName: entry.Name(),
+			Status:   model.ImportProcessing,
+		}
+		if err := s.importRepo.CreateJob(ctx, job); err != nil {
+			log.Printf("[BATCH_IMPORT] Failed to create job for %s: %v", entry.Name(), err)
+			continue
+		}
+
+		if _, err := s.ProcessCSV(ctx, filePath, job); err != nil {
 			log.Printf("[BATCH_IMPORT] Failed to process %s: %v", entry.Name(), err)
 		}
 	}
 }
 
+// QueueJob creates a PENDING job for a file already in the import directory
+func (s *BatchImportService) QueueJob(ctx context.Context, fileName string) (*model.ImportJob, error) {
+	job := &model.ImportJob{
+		FileName: fileName,
+		Status:   model.ImportPending,
+	}
+	if err := s.importRepo.CreateJob(ctx, job); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// RunJobByID manually triggers a pending job
+func (s *BatchImportService) RunJobByID(ctx context.Context, jobID string) error {
+	// Find the job in DB (This would need a FindByID in repo, but we can list and filter for now)
+	jobs, err := s.importRepo.FindAllJobs(ctx)
+	if err != nil {
+		return err
+	}
+
+	var targetJob *model.ImportJob
+	for i := range jobs {
+		if jobs[i].ID == jobID {
+			targetJob = &jobs[i]
+			break
+		}
+	}
+
+	if targetJob == nil {
+		return fmt.Errorf("job not found")
+	}
+
+	if targetJob.Status != model.ImportPending {
+		return fmt.Errorf("job is already processed or processing")
+	}
+
+	filePath := filepath.Join(s.importDir, targetJob.FileName)
+	go func() {
+		// Create a background context to avoid timeout
+		bgCtx := context.Background()
+		_, _ = s.ProcessCSV(bgCtx, filePath, targetJob)
+	}()
+
+	return nil
+}
+
 func (s *BatchImportService) GetJobs(ctx context.Context) ([]model.ImportJob, error) {
 	return s.importRepo.FindAllJobs(ctx)
+}
+
+func (s *BatchImportService) GetErrors(ctx context.Context, jobID string) ([]model.ImportError, error) {
+	return s.importRepo.FindErrorsByJobID(ctx, jobID)
 }
