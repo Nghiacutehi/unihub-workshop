@@ -61,8 +61,8 @@ def generate_students(count=12000):
     students = []
     used_ids = set()
     
-    # Start from student ID 21127100 to avoid collision with seed data (21127001-21127019)
-    base_id = 21127100
+    # Start from student ID 31127100 to avoid collision with old test data
+    base_id = 31127100
     
     for i in range(count):
         student_id = str(base_id + i)

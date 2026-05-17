@@ -35,6 +35,7 @@ CREATE TABLE public.workshops (
   available_seats integer NOT NULL,
   price numeric NOT NULL DEFAULT 0.00,
   summary text,
+  room_layout_url character varying,
   status character varying NOT NULL DEFAULT 'PUBLISHED'::character varying,
   created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT workshops_pkey PRIMARY KEY (id)

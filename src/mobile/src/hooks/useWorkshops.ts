@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../services/supabase';
+import { apiRequest } from '../services/api';
 import { getWorkshopsOffline, saveWorkshopsOffline, Workshop } from '../services/storage';
 
 export function useWorkshops() {
@@ -40,14 +40,12 @@ export function useWorkshops() {
     if (!isBackground) setLoading(true);
 
     try {
-      const { data, error } = await supabase
-        .from('workshops')
-        .select('*')
-        .order('start_time', { ascending: true });
+      // Gọi Go Backend — GET /api/v1/workshops
+      const { data, error } = await apiRequest<any[]>('/api/v1/workshops');
 
-      if (error) throw error;
+      if (error || !data) throw new Error(error || 'Fetch failed');
 
-      const finalData = processWorkshops(data || []);
+      const finalData = processWorkshops(data);
       setWorkshops(finalData);
       await saveWorkshopsOffline(finalData); // Lưu vào máy để dùng lần sau
 

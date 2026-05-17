@@ -13,7 +13,7 @@ import { api, auth, APIError } from '@/lib/api-client'
  * LoginForm — Đăng nhập qua Go Backend API.
  *
  * Luồng: POST /api/v1/auth/login → nhận { token, user } → lưu cookie → redirect
- * Seed data: student_id = "21127001", password = "password123"
+ * Seed data: student_id = "21127001", password = "123456"
  *
  * Tuân thủ: agent.md mục 10.4 (Auth), ui_web.md mục 3.1
  */
@@ -113,7 +113,7 @@ export function LoginForm() {
             id="studentId"
             name="studentId"
             type="text"
-            placeholder="Nhập mã số (VD: 21127001 hoặc ADMIN001)"
+            placeholder="Nhập mã số (VD: 21127001 hoặc admin)"
             value={formData.studentId}
             onChange={handleChange}
             className="pl-10 h-11 bg-background border-input"

@@ -31,7 +31,7 @@ type AISummaryService struct {
 // NewAISummaryService creates a new instance of AISummaryService
 func NewAISummaryService(workshopRepo *repository.WorkshopRepo, apiKey, modelName string, temperature float64, maxTokens int) *AISummaryService {
 	if modelName == "" {
-		modelName = "gemini-1.5-flash-lite-preview"
+		modelName = "gemini-2.0-flash"
 	}
 	return &AISummaryService{
 		workshopRepo: workshopRepo,

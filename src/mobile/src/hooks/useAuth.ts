@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../services/supabase';
+import { apiRequest, saveToken, clearToken } from '../services/api';
 
 const SESSION_KEY = '@unihub_session';
 
@@ -16,48 +16,57 @@ export type UserSession = {
 
 /**
  * Hook xử lý xác thực người dùng.
- * Truy vấn trực tiếp bảng `users` trong PostgreSQL (đúng auth.md mục 3.1).
+ * Gọi Go Backend API thay vì Supabase trực tiếp.
  */
 export function useAuth() {
   const [loading, setLoading] = useState(false);
 
-  /** Đăng nhập bằng email + password, so sánh với password_hash trong DB */
+  /** Đăng nhập bằng MSSV/email + password qua Go Backend */
   const login = async (email: string, password: string): Promise<UserSession | null> => {
     if (!email || !password) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng nhập Email và Mật khẩu');
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập Email/MSSV và Mật khẩu');
       return null;
     }
 
     setLoading(true);
     try {
-      // 1. Truy vấn bảng users bằng email HOẶC user_id (MSSV)
-      const { data: user, error } = await supabase
-        .from('users')
-        .select('id, user_id, password_hash, full_name, email, role')
-        .or(`email.eq.${email},user_id.eq.${email}`)
-        .single();
+      // Gọi Go Backend — POST /api/v1/auth/login
+      const { data, error } = await apiRequest<{
+        token: string;
+        user: {
+          id: string;
+          user_id: string;
+          full_name: string;
+          email: string;
+          role: string;
+        };
+      }>('/api/v1/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: email,
+          password: password,
+        }),
+      });
 
-      if (error || !user) {
-        throw new Error('Tài khoản không tồn tại trên hệ thống');
+      if (error || !data) {
+        throw new Error(error || 'Đăng nhập thất bại');
       }
 
-      // 2. So sánh mật khẩu (Plaintext cho dev)
-      if (user.password_hash !== password) {
-        throw new Error('Mật khẩu không chính xác');
+      // Kiểm tra quyền — Chỉ Staff/Admin được vào Mobile
+      if (data.user.role !== 'STAFF' && data.user.role !== 'ADMIN') {
+        throw new Error(`Tài khoản sinh viên (${data.user.user_id}) không có quyền vào ứng dụng Staff`);
       }
 
-      // 3. Kiểm tra quyền — Chỉ Staff/Admin được vào Mobile
-      if (user.role !== 'STAFF' && user.role !== 'ADMIN') {
-        throw new Error(`Tài khoản sinh viên (${user.user_id}) không có quyền vào ứng dụng Staff`);
-      }
+      // Lưu JWT token
+      await saveToken(data.token);
 
-      // 4. Tạo session và lưu vào AsyncStorage
+      // Tạo session và lưu vào AsyncStorage
       const session: UserSession = {
-        id: user.id,
-        user_id: user.user_id,
-        full_name: user.full_name,
-        email: user.email,
-        role: user.role,
+        id: data.user.id,
+        user_id: data.user.user_id,
+        full_name: data.user.full_name,
+        email: data.user.email,
+        role: data.user.role,
       };
       await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(session));
 
@@ -70,9 +79,10 @@ export function useAuth() {
     }
   };
 
-  /** Đăng xuất — xóa session khỏi bộ nhớ máy */
+  /** Đăng xuất — xóa session và token khỏi bộ nhớ máy */
   const logout = async () => {
     await AsyncStorage.removeItem(SESSION_KEY);
+    await clearToken();
   };
 
   /** Đọc session đã lưu (dùng khi mở lại app) */

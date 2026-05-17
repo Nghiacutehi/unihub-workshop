@@ -5,7 +5,7 @@ import { Buffer } from 'buffer';
 
 const PUBLIC_KEY_STORAGE_KEY = '@unihub_public_key';
 // Thay đổi IP này cho khớp với IP máy tính chạy Go Backend
-export const API_BASE_URL = 'http://192.168.1.8:8080';
+export const API_BASE_URL = 'http://192.168.7.117:8080';
 
 /**
  * Tải và lưu trữ Public Key từ Backend.

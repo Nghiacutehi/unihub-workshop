@@ -69,10 +69,27 @@ export default function ScannerScreen({ currentWorkshop, onClose, onScanSuccess 
         throw new Error('FORMAT_ERROR');
       }
 
-      const sid = String(payload.sid || '').trim();
-      const uid = String(payload.uid || '').trim();
-      const wid = String(payload.wid || '').trim();
-      const sig = String(payload.sig || '').trim();
+      // Handle double-encoded QR: ticket_signature in DB is already JSON,
+      // so the QR data might have sig as a nested JSON string
+      let sid = String(payload.sid || '').trim();
+      let uid = String(payload.uid || '').trim();
+      let wid = String(payload.wid || '').trim();
+      let sig = String(payload.sig || '').trim();
+
+      // If sig looks like JSON (starts with {), it's the full ticket payload
+      // Extract the actual base64 signature from inside
+      if (sig.startsWith('{')) {
+        try {
+          const innerPayload = JSON.parse(sig);
+          sid = sid || String(innerPayload.sid || '').trim();
+          uid = uid || String(innerPayload.uid || '').trim();
+          wid = wid || String(innerPayload.wid || '').trim();
+          sig = String(innerPayload.sig || '').trim();
+          console.log('📦 [Scanner] Extracted inner sig from nested JSON');
+        } catch (e) {
+          console.warn('⚠️ [Scanner] Failed to parse nested sig JSON');
+        }
+      }
 
       if (!sid || !wid || !uid || !sig) {
         console.warn('⚠️ [Scanner] Missing required fields in payload');

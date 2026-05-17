@@ -1,0 +1,11 @@
+student_id,password,full_name,email,phone,role
+88127011,password123,Lê Văn Mini,mini1.le@student.edu.vn,0881234011,STUDENT
+88127012,password123,Trần Thị Nhỏ,nho2.tran@student.edu.vn,0881234012,STUDENT
+88127013,password123,Phạm Minh Bé,be3.pham@student.edu.vn,0881234013,STUDENT
+88127014,password123,Ngô Hoàng Út,ut4.ngo@student.edu.vn,0881234014,STUDENT
+88127015,password123,Võ Đức Test,test5.vo@student.edu.vn,0881234015,STUDENT
+88127016,password123,Đặng Uyên Nhí,nhi6.dang@student.edu.vn,0881234016,STUDENT
+88127017,password123,Bùi Tuấn Anh,anh7.bui@student.edu.vn,0881234017,STUDENT
+88127018,password123,Mai Phương Thảo,thao8.mai@student.edu.vn,0881234018,STUDENT
+88127019,password123,Đỗ Quỳnh Chi,chi9.do@student.edu.vn,0881234019,STUDENT
+88127020,password123,Hồ Thanh Sang,sang10.ho@student.edu.vn,0881234020,STUDENT

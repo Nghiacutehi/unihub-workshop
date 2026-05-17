@@ -14,6 +14,8 @@ import (
 
 	"unihub-workshop/internal/model"
 	"unihub-workshop/internal/repository"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type BatchImportService struct {
@@ -60,7 +62,7 @@ func (s *BatchImportService) ProcessCSV(ctx context.Context, filePath string, jo
 
 	// Phase 3: Load (High Performance Bulk)
 	successCount := 0
-	
+
 	// Process in chunks of 1000
 	chunkSize := 1000
 	for i := 0; i < len(validRecords); i += chunkSize {
@@ -198,9 +200,7 @@ func (s *BatchImportService) transform(records [][]string, jobID string) ([][]st
 		}
 		seen[studentID] = true
 
-		// Hash password - DISABLED (assuming pre-hashed as per request)
-		hashedPw := password 
-		/*
+		// Hash password
 		hashedPw, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			errors = append(errors, model.ImportError{
@@ -211,9 +211,8 @@ func (s *BatchImportService) transform(records [][]string, jobID string) ([][]st
 			})
 			continue
 		}
-		*/
 
-		valid = append(valid, []string{studentID, hashedPw, fullName, email, phone, role})
+		valid = append(valid, []string{studentID, string(hashedPw), fullName, email, phone, role})
 	}
 
 	return valid, errors
@@ -239,7 +238,7 @@ func (s *BatchImportService) ScanAndImport(ctx context.Context) {
 			continue
 		}
 		filePath := filepath.Join(s.importDir, entry.Name())
-		
+
 		// Create a PENDING job record if it doesn't exist for this file
 		job := &model.ImportJob{
 			FileName: entry.Name(),
