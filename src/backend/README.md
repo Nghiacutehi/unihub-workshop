@@ -52,10 +52,10 @@ curl http://localhost:8080/health
 
 | Student ID | Password | Role | Mô tả |
 |---|---|---|---|
-| `21127001` | `password123` | STUDENT | Nguyễn Văn An |
-| `21127002` | `password123` | STUDENT | Trần Thị Bình |
-| `ADMIN001` | `password123` | ORGANIZER | Admin |
-| `STAFF001` | `password123` | STAFF | Nhân sự check-in |
+| `admin` | `123456` | ADMIN | System Administrator |
+| `staff01` | `123456` | STAFF | Trần Staff |
+| `21127001` | `123456` | STUDENT | Nguyễn Văn An |
+| `21127002` | `123456` | STUDENT | Trần Thị Bình |
 
 ## API Endpoints
 
