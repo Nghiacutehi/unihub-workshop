@@ -29,11 +29,6 @@ const navItems = [
     href: '/admin/data-sync', 
     icon: Database 
   },
-  { 
-    name: 'Cài đặt', 
-    href: '/admin/settings', 
-    icon: Settings 
-  },
 ]
 
 export function AdminSidebar() {

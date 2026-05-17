@@ -149,13 +149,20 @@ func (s *PaymentService) HandleWebhook(ctx context.Context, req *model.PaymentWe
 		return fmt.Errorf("payment not found: %w", err)
 	}
 
+	// =========================================================================
+	// STATE CHECK (IDEMPOTENCY): Prevent state overwriting or late failure overrides
+	// =========================================================================
+	if payment.Status == model.PaymentSuccess {
+		log.Printf("[PAYMENT] Transaction %s already processed successfully, ignoring duplicate.", req.TransactionID)
+		return nil
+	}
+	if payment.Status == model.PaymentFailed || payment.Status == model.PaymentCancelled {
+		log.Printf("[PAYMENT] Transaction %s already finalized as failed/cancelled, ignoring.", req.TransactionID)
+		return fmt.Errorf("transaction already finalized as failed/cancelled")
+	}
+
 	switch req.Status {
 	case "SUCCESS":
-		// Update payment status
-		if err := s.paymentRepo.UpdateStatus(ctx, req.TransactionID, model.PaymentSuccess); err != nil {
-			return err
-		}
-
 		// Generate RSA Signature after successful payment
 		var sig string
 		reg, _ := s.regRepo.FindByID(ctx, payment.RegistrationID)
@@ -166,8 +173,27 @@ func (s *PaymentService) HandleWebhook(ctx context.Context, req *model.PaymentWe
 			}
 		}
 
-		if err := s.regRepo.UpdateStatusAndQR(ctx, payment.RegistrationID, model.RegSuccess, sig); err != nil {
-			return err
+		// Execute database updates inside a single transaction to ensure atomicity
+		tx, err := s.regRepo.GetPool().Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer tx.Rollback(ctx)
+
+		// 1. Update payment status inside transaction
+		_, err = tx.Exec(ctx, `UPDATE payments SET status = $1 WHERE transaction_id = $2 AND status = 'PENDING'`, model.PaymentSuccess, req.TransactionID)
+		if err != nil {
+			return fmt.Errorf("failed to update payment status in tx: %w", err)
+		}
+
+		// 2. Update registration status and QR signature inside transaction
+		_, err = tx.Exec(ctx, `UPDATE registrations SET status = $1, ticket_signature = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND status = 'PENDING_PAYMENT'`, model.RegSuccess, sig, payment.RegistrationID)
+		if err != nil {
+			return fmt.Errorf("failed to update registration status in tx: %w", err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
 		}
 
 		// Publish notification
@@ -191,13 +217,29 @@ func (s *PaymentService) HandleWebhook(ctx context.Context, req *model.PaymentWe
 		log.Printf("[PAYMENT] Success: tx=%s", req.TransactionID)
 
 	case "FAILED":
-		if err := s.paymentRepo.UpdateStatus(ctx, req.TransactionID, model.PaymentFailed); err != nil {
-			return err
+		tx, err := s.regRepo.GetPool().Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
-		if err := s.regRepo.UpdateStatus(ctx, payment.RegistrationID, model.RegFailed); err != nil {
-			return err
+		defer tx.Rollback(ctx)
+
+		// 1. Update payment status inside transaction
+		_, err = tx.Exec(ctx, `UPDATE payments SET status = $1 WHERE transaction_id = $2 AND status = 'PENDING'`, model.PaymentFailed, req.TransactionID)
+		if err != nil {
+			return fmt.Errorf("failed to update payment status in tx: %w", err)
 		}
-		// Restore seat
+
+		// 2. Update registration status inside transaction
+		_, err = tx.Exec(ctx, `UPDATE registrations SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'PENDING_PAYMENT'`, model.RegFailed, payment.RegistrationID)
+		if err != nil {
+			return fmt.Errorf("failed to update registration status in tx: %w", err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
+		}
+
+		// Restore seat (after successful commit)
 		reg, _ := s.regRepo.FindByID(ctx, payment.RegistrationID)
 		if reg != nil {
 			_ = s.workshopRepo.IncrementSeat(ctx, reg.WorkshopID)
@@ -217,18 +259,29 @@ func (s *PaymentService) CleanupExpiredPayments(ctx context.Context) {
 	}
 
 	for _, reg := range expired {
-		// 1. Xóa Payment liên quan trước (để tránh lỗi Foreign Key)
-		if err := s.paymentRepo.DeleteByRegistration(ctx, reg.ID); err != nil {
-			log.Printf("[PAYMENT_CLEANUP] Failed to delete payment for reg %s: %v", reg.ID, err)
-		}
-
-		// 2. Xóa Registration
-		if err := s.regRepo.Delete(ctx, reg.ID); err != nil {
-			log.Printf("[PAYMENT_CLEANUP] Failed to delete reg %s: %v", reg.ID, err)
+		tx, err := s.regRepo.GetPool().Begin(ctx)
+		if err != nil {
+			log.Printf("[PAYMENT_CLEANUP] Failed to start transaction for reg %s: %v", reg.ID, err)
 			continue
 		}
 
-		// 3. Hoàn trả lại số ghế trong Workshop
+		// 1. Soft-cancel Payment inside transaction (if exists)
+		_, _ = tx.Exec(ctx, `UPDATE payments SET status = $1 WHERE registration_id = $2 AND status = 'PENDING'`, model.PaymentCancelled, reg.ID)
+
+		// 2. Soft-cancel Registration inside transaction
+		_, err = tx.Exec(ctx, `UPDATE registrations SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'PENDING_PAYMENT'`, model.RegCancelled, reg.ID)
+		if err != nil {
+			tx.Rollback(ctx)
+			log.Printf("[PAYMENT_CLEANUP] Failed to cancel registration %s in DB: %v", reg.ID, err)
+			continue
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			log.Printf("[PAYMENT_CLEANUP] Failed to commit cancellation for reg %s: %v", reg.ID, err)
+			continue
+		}
+
+		// 3. Hoàn trả lại số ghế trong Workshop (after successful commit)
 		if err := s.workshopRepo.IncrementSeat(ctx, reg.WorkshopID); err != nil {
 			log.Printf("[PAYMENT_CLEANUP] Failed to restore seat in DB for workshop %s: %v", reg.WorkshopID, err)
 		}
@@ -240,7 +293,7 @@ func (s *PaymentService) CleanupExpiredPayments(ctx context.Context) {
 			}
 		}
 
-		log.Printf("[PAYMENT_CLEANUP] Deleted expired registration: %s (Seat released)", reg.ID)
+		log.Printf("[PAYMENT_CLEANUP] Cancelled expired registration: %s (Seat released)", reg.ID)
 	}
 }
 

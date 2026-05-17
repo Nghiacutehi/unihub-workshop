@@ -46,7 +46,7 @@ func NewAISummaryService(workshopRepo *repository.WorkshopRepo, apiKey, modelNam
 // ProcessPDF implements the full pipeline including persistence (for backward compatibility)
 func (s *AISummaryService) ProcessPDF(ctx context.Context, workshopID string, pdfData []byte) (string, error) {
 	log.Printf("[AI_SUMMARY] Starting full pipeline for workshop %s", workshopID)
-	
+
 	summary, err := s.Summarize(ctx, pdfData)
 	if err != nil {
 		return "", err
@@ -108,7 +108,7 @@ func (s *AISummaryService) extractText(pdfData []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	_, err = io.Copy(&buf, b)
 	if err != nil {
 		return "", err
@@ -137,7 +137,7 @@ func (s *AISummaryService) cleanText(text string) string {
 	// Remove extra whitespace and special characters
 	spaceRe := regexp.MustCompile(`\s+`)
 	text = spaceRe.ReplaceAllString(text, " ")
-	
+
 	// Remove non-printable characters except common punctuation
 	text = strings.Map(func(r rune) rune {
 		if r >= 32 && r < 127 || r == '\n' || r == '\t' {
@@ -173,7 +173,7 @@ func (s *AISummaryService) callGemini(ctx context.Context, text string) (string,
 	defer client.Close()
 
 	model := client.GenerativeModel(s.modelName)
-	
+
 	// Configure generation from service fields
 	temp := float32(s.temperature)
 	model.Temperature = &temp

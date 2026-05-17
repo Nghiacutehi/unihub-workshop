@@ -72,7 +72,6 @@ export function AdminHeader() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem>Hồ sơ cá nhân</DropdownMenuItem>
-            <DropdownMenuItem>Cài đặt</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-rose-600">
               Đăng xuất

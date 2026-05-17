@@ -105,7 +105,7 @@ export default function DataSyncPage() {
           <Loader2 className="h-3 w-3 animate-spin" /> Đang xử lý
         </Badge>
       case 'PENDING':
-        return <Badge className="bg-amber-50 text-amber-700 border-amber-100 hover:bg-amber-50 gap-1 rounded-lg">
+        return <Badge className="bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-50 gap-1 rounded-lg">
           <Clock className="h-3 w-3" /> Chờ xử lý
         </Badge>
       case 'FAILED':
@@ -186,7 +186,7 @@ export default function DataSyncPage() {
             Lịch sử điều phối dữ liệu
           </h2>
           <div className="flex items-center gap-2 text-sm text-slate-500 italic">
-            <Clock className="h-4 w-4" />
+            <Clock className="h-4 w-4 text-amber-600" />
             Tự động chạy tiếp theo: 02:00 AM Ngày mai
           </div>
         </div>

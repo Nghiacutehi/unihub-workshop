@@ -140,7 +140,7 @@ func (r *RegistrationRepo) FindByStudentAndWorkshop(ctx context.Context, student
 		`SELECT r.id, r.user_id, r.workshop_id, r.status, r.ticket_signature, r.is_checked_in, r.created_at
 		 FROM registrations r
 		 JOIN users u ON r.user_id = u.id
-		 WHERE u.student_id = $1 AND r.workshop_id = $2 AND r.status IN ('SUCCESS', 'PENDING_PAYMENT')`,
+		 WHERE u.user_id = $1 AND r.workshop_id = $2 AND r.status IN ('SUCCESS', 'PENDING_PAYMENT')`,
 		studentID, workshopID,
 	).Scan(&reg.ID, &reg.UserID, &reg.WorkshopID, &reg.Status, &reg.TicketSignature,
 		&reg.IsCheckedIn, &reg.CreatedAt)

@@ -45,7 +45,7 @@ const statusConfig = {
   },
   CLOSED: {
     label: "Đã đóng",
-    className: "bg-amber-50 text-amber-700 border-amber-200",
+    className: "bg-amber-50 text-amber-600 border-amber-200",
   },
   DELETED: {
     label: "Đã xóa",
