@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -61,16 +62,73 @@ func (s *RegistrationService) CheckWaitingRoom(ctx context.Context, workshopID, 
 	return s.waitingRoom.Enter(ctx, workshopID, userID)
 }
 
-// EnqueueRegistration pushes registration request to RabbitMQ and returns a correlation ID
-func (s *RegistrationService) EnqueueRegistration(ctx context.Context, userID, workshopID string) (string, error) {
-	// Check if already registered
-	existing, _ := s.regRepo.FindByUserAndWorkshop(ctx, userID, workshopID)
-	if existing != nil && (existing.Status == model.RegSuccess || existing.Status == model.RegPendingPayment) {
-		return "", fmt.Errorf("already registered for this workshop")
+// EnqueueRegistration pushes registration request to RabbitMQ and returns a correlation ID.
+// Highly optimized: 0% Database query is performed for duplicate check at ingestion. It uses Redis Set and SetNX lock.
+func (s *RegistrationService) EnqueueRegistration(ctx context.Context, userID, workshopID, clientCorrelationID string) (string, error) {
+	// 1. Determine CorrelationID (use client-side idempotency key or generate new one)
+	correlationID := clientCorrelationID
+	if correlationID == "" {
+		correlationID = uuid.New().String()
 	}
 
-	correlationID := uuid.New().String()
+	// 2. CHECK REGISTRATION DUPLICATE VIA REDIS SET (SIsMember) - Extremely fast RAM check
+	redisSetKey := fmt.Sprintf("workshop:registered:%s", workshopID)
+	isRegistered, err := s.redis.SIsMember(ctx, redisSetKey, userID).Result()
+	if err != nil {
+		return "", fmt.Errorf("failed to verify registration state: %w", err)
+	}
+	if isRegistered {
+		return "", fmt.Errorf("bạn đã đăng ký workshop này rồi")
+	}
 
+	// 3. PREVENT DOUBLE-SUBMIT (SPAM CLICK / RETRY) USING REDIS SETNX
+	// Acquired lock for 5 minutes to prevent race conditions on the same correlation ID
+	lockKey := fmt.Sprintf("lock:registration:%s", correlationID)
+	acquired, err := s.redis.SetNX(ctx, lockKey, "PROCESSING", 300*time.Second).Result()
+	if err != nil {
+		return "", fmt.Errorf("failed to acquire transaction lock: %w", err)
+	}
+	if !acquired {
+		return "", fmt.Errorf("yêu cầu đang được xử lý, vui lòng không gửi yêu cầu liên tục")
+	}
+
+	// Set initial status to prevent client 404
+	s.SetStatus(correlationID, &model.RegistrationStatusResponse{
+		CorrelationID: correlationID,
+		Status:        "PROCESSING",
+		Message:       "Your registration is being processed",
+	})
+
+	// 4. PRE-WARM CACHE & DECREMENT SEAT VIA REDIS LUA SCRIPT (DOUBLE-CHECK)
+	workshop, err := s.workshopRepo.FindByID(ctx, workshopID)
+	if err != nil {
+		s.redis.Del(ctx, lockKey)
+		return "", fmt.Errorf("workshop not found: %w", err)
+	}
+
+	// CHECK: Nếu là workshop có phí mà cổng thanh toán đang bảo trì -> Chặn luôn
+	if workshop.Price > 0 && s.paymentService.IsGatewayDown(ctx) {
+		s.redis.Del(ctx, lockKey)
+		return "", fmt.Errorf("cổng thanh toán đang bảo trì, vui lòng quay lại sau")
+	}
+	
+	if err := s.seatLimiter.PrepareCache(ctx, workshopID, workshop.AvailableSeats); err != nil {
+		s.redis.Del(ctx, lockKey)
+		return "", fmt.Errorf("failed to prepare seat cache: %w", err)
+	}
+
+	success, err := s.seatLimiter.TryAcquireSeat(ctx, workshopID)
+	if err != nil {
+		s.redis.Del(ctx, lockKey)
+		return "", fmt.Errorf("failed to acquire seat in Redis: %w", err)
+	}
+
+	if !success {
+		s.redis.Del(ctx, lockKey)
+		return "", fmt.Errorf("workshop is full (verified by cache)")
+	}
+
+	// 5. PUBLISH TO RABBITMQ
 	msg := model.QueueMessage{
 		CorrelationID: correlationID,
 		UserID:        userID,
@@ -78,46 +136,10 @@ func (s *RegistrationService) EnqueueRegistration(ctx context.Context, userID, w
 		Action:        "REGISTER",
 	}
 
-	// Set initial status
-	s.SetStatus(correlationID, &model.RegistrationStatusResponse{
-		CorrelationID: correlationID,
-		Status:        "PROCESSING",
-		Message:       "Your registration is being processed",
-	})
-
-	// ==========================================
-	// 2. REDIS SEAT LOCK (DOUBLE-CHECK)
-	// ==========================================
-	// Before enqueuing, we try to decrement the seat count in Redis.
-	// This acts as a high-performance shield for the database.
-	
-	// Pre-warm cache if needed (Get workshop to know initial seats)
-	workshop, err := s.workshopRepo.FindByID(ctx, workshopID)
-	if err != nil {
-		return "", fmt.Errorf("workshop not found: %w", err)
-	}
-
-	// CHECK: Nếu là workshop có phí mà cổng thanh toán đang bảo trì -> Chặn luôn
-	if workshop.Price > 0 && s.paymentService.IsGatewayDown(ctx) {
-		return "", fmt.Errorf("cổng thanh toán đang bảo trì, vui lòng quay lại sau")
-	}
-	
-	if err := s.seatLimiter.PrepareCache(ctx, workshopID, workshop.AvailableSeats); err != nil {
-		return "", fmt.Errorf("failed to prepare seat cache: %w", err)
-	}
-
-	success, err := s.seatLimiter.TryAcquireSeat(ctx, workshopID)
-	if err != nil {
-		return "", fmt.Errorf("failed to acquire seat in Redis: %w", err)
-	}
-
-	if !success {
-		return "", fmt.Errorf("workshop is full (verified by cache)")
-	}
-
 	if err := s.publisher.Publish(ctx, queue.RegistrationQueue, msg); err != nil {
-		// Rollback Redis seat if publishing fails
+		// Rollback Redis seat and unlock if publishing fails
 		_ = s.seatLimiter.ReleaseSeat(ctx, workshopID)
+		s.redis.Del(ctx, lockKey)
 		
 		s.SetStatus(correlationID, &model.RegistrationStatusResponse{
 			CorrelationID: correlationID,
@@ -129,7 +151,6 @@ func (s *RegistrationService) EnqueueRegistration(ctx context.Context, userID, w
 
 	log.Printf("[REGISTRATION] Enqueued: correlation=%s user=%s workshop=%s", correlationID, userID, workshopID)
 	
-	// Khởi tạo trạng thái PROCESSING ngay khi Enqueue thành công để tránh lỗi 404 ở Client
 	s.SetStatus(correlationID, &model.RegistrationStatusResponse{
 		CorrelationID: correlationID,
 		Status:        model.RegProcessing,
@@ -196,6 +217,11 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 		// Xử lý lỗi trùng lặp (Idempotency)
 		if strings.Contains(err.Error(), "uq_user_workshop") {
 			log.Printf("[WORKER] Duplicate registration attempt: user=%s workshop=%s", msg.UserID, msg.WorkshopID)
+			
+			// Đồng bộ dữ liệu Redis Set và giải phóng khoá Double-Submit
+			_ = s.redis.SAdd(ctx, fmt.Sprintf("workshop:registered:%s", msg.WorkshopID), msg.UserID).Err()
+			_ = s.redis.Del(ctx, fmt.Sprintf("lock:registration:%s", msg.CorrelationID)).Err()
+			
 			s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
 				CorrelationID: msg.CorrelationID,
 				Status:        model.RegFailed,
@@ -203,6 +229,9 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 			})
 			return nil // Trả về nil để ACK tin nhắn, không retry nữa
 		}
+
+		// Giải phóng khoá Double-Submit để cho phép thử lại sau
+		_ = s.redis.Del(ctx, fmt.Sprintf("lock:registration:%s", msg.CorrelationID)).Err()
 
 		s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
 			CorrelationID: msg.CorrelationID,
@@ -229,8 +258,13 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		_ = s.redis.Del(ctx, fmt.Sprintf("lock:registration:%s", msg.CorrelationID)).Err()
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	// ĐĂNG KÝ THÀNH CÔNG: Ghi nhận vĩnh viễn vào Redis Set và giải phóng khoá Double-Submit
+	_ = s.redis.SAdd(ctx, fmt.Sprintf("workshop:registered:%s", msg.WorkshopID), msg.UserID).Err()
+	_ = s.redis.Del(ctx, fmt.Sprintf("lock:registration:%s", msg.CorrelationID)).Err()
 
 	// Nếu là workshop có phí, khởi tạo thanh toán ngay lập tức
 	var paymentURL string
@@ -302,9 +336,45 @@ func (s *RegistrationService) GetUserRegistrations(ctx context.Context, userID s
 	return s.regRepo.FindByUser(ctx, userID)
 }
 func (s *RegistrationService) GetUserRegistrationsWithWorkshop(ctx context.Context, userID string) ([]model.RegistrationWithWorkshop, error) {
-	return s.regRepo.FindByUserWithWorkshop(ctx, userID)
+	regs, err := s.regRepo.FindByUserWithWorkshop(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch student_id of the user
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return regs, nil // If user not found, return original list without converting signatures
+	}
+
+	// Dynamically build QR JSON payload from raw signature stored in DB
+	for i := range regs {
+		if regs[i].TicketSignature != nil && *regs[i].TicketSignature != "" {
+			qrJSON, err := crypto.GenerateQRData(user.StudentID, regs[i].UserID, regs[i].WorkshopID, *regs[i].TicketSignature)
+			if err == nil {
+				regs[i].TicketSignature = &qrJSON
+			}
+		}
+	}
+
+	return regs, nil
 }
 
 func (s *RegistrationService) GetByWorkshop(ctx context.Context, workshopID string) ([]model.RegistrationWithUser, error) {
-	return s.regRepo.FindByWorkshopWithUser(ctx, workshopID)
+	regs, err := s.regRepo.FindByWorkshopWithUser(ctx, workshopID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dynamically build QR JSON payload from raw signature stored in DB
+	for i := range regs {
+		if regs[i].TicketSignature != nil && *regs[i].TicketSignature != "" {
+			qrJSON, err := crypto.GenerateQRData(regs[i].StudentID, regs[i].UserID, regs[i].WorkshopID, *regs[i].TicketSignature)
+			if err == nil {
+				regs[i].TicketSignature = &qrJSON
+			}
+		}
+	}
+
+	return regs, nil
 }

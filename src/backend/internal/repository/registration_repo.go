@@ -152,8 +152,8 @@ func (r *RegistrationRepo) FindByStudentAndWorkshop(ctx context.Context, student
 
 func (r *RegistrationRepo) FindByWorkshopWithUser(ctx context.Context, workshopID string) ([]model.RegistrationWithUser, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT r.id, r.user_id, r.workshop_id, r.status, r.ticket_signature, r.is_checked_in, r.created_at,
-		        u.student_id, u.full_name, u.email
+		`SELECT r.id, r.user_id, r.workshop_id, r.status, COALESCE(r.ticket_signature, ''), r.is_checked_in, r.created_at,
+		        COALESCE(u.user_id, ''), u.full_name, u.email
 		 FROM registrations r
 		 JOIN users u ON r.user_id = u.id
 		 WHERE r.workshop_id = $1

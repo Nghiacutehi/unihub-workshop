@@ -2,7 +2,7 @@
 -- Passwords are bcrypt hashed version of "password123"
 
 -- Users (password: password123)
-INSERT INTO users (student_id, password_hash, full_name, email, phone, role) VALUES
+INSERT INTO users (user_id, password_hash, full_name, email, phone, role) VALUES
 ('21127001', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Nguyễn Văn An', 'an.nguyen@student.edu.vn', '0901234001', 'STUDENT'),
 ('21127002', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Trần Thị Bình', 'binh.tran@student.edu.vn', '0901234002', 'STUDENT'),
 ('21127003', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Lê Hoàng Cường', 'cuong.le@student.edu.vn', '0901234003', 'STUDENT'),
@@ -10,7 +10,7 @@ INSERT INTO users (student_id, password_hash, full_name, email, phone, role) VAL
 ('21127005', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Hoàng Thị Em', 'em.hoang@student.edu.vn', '0901234005', 'STUDENT'),
 ('ADMIN001', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Nguyễn Admin', 'admin@unihub.edu.vn', '0909999001', 'ORGANIZER'),
 ('STAFF001', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Trần Staff', 'staff@unihub.edu.vn', '0909999002', 'STAFF')
-ON CONFLICT (student_id) DO NOTHING;
+ON CONFLICT (user_id) DO NOTHING;
 
 -- Workshops (5-day event, Monday to Friday)
 INSERT INTO workshops (title, description, speaker, room, start_time, end_time, capacity, available_seats, price, status) VALUES

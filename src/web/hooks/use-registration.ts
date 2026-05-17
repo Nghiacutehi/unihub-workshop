@@ -80,14 +80,23 @@ export function useRegistration(workshopId: string) {
     setIsRegistering(true)
     setRegStatus('Đang gửi yêu cầu...')
 
+    // Sinh Idempotency Key (CorrelationID) ngay tại Client dùng chuẩn W3C Web Crypto API
+    const idempotencyKey = typeof window !== 'undefined' && window.crypto?.randomUUID 
+      ? window.crypto.randomUUID() 
+      : `${workshopId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
     try {
       const response = await api.post<any>('/api/v1/registrations', {
-        workshop_id: workshopId
+        workshop_id: workshopId,
+        correlation_id: idempotencyKey
       })
 
-      if (response.data?.correlationId) {
+      // Go Backend trả về correlation_id dưới dạng snake_case
+      const returnedCorrelationId = response.data?.correlation_id || response.data?.correlationId || idempotencyKey;
+
+      if (returnedCorrelationId) {
         setRegStatus('Hệ thống đang xử lý...')
-        pollRegistrationStatus(response.data.correlationId)
+        pollRegistrationStatus(returnedCorrelationId)
       }
     } catch (error: any) {
       const errorMsg = error.message || ""

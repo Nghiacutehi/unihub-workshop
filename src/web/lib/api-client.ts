@@ -93,12 +93,20 @@ type FetchOptions = {
  *
  * @throws Error khi success=false hoặc HTTP lỗi
  */
+/** Helper function to sleep for a specified duration */
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Gọi API Go Backend.
+ * Tự động gắn JWT, chuyển đổi case, unwrap APIResponse, và TỰ ĐỘNG RETRY khi có lỗi mạng/5xx (3 lần, Exponential Backoff).
+ *
+ * @throws Error khi success=false hoặc HTTP lỗi
+ */
 async function fetchAPI<T = unknown>(
   endpoint: string,
   options: FetchOptions = {}
 ): Promise<APIResponse<T>> {
   const { method = 'GET', body, headers = {}, rawResponse = false } = options
-
   const url = `${API_BASE_URL}${endpoint}`
 
   const requestHeaders: Record<string, string> = {
@@ -127,43 +135,68 @@ async function fetchAPI<T = unknown>(
     }
   }
 
-  try {
-    const response = await fetch(url, fetchInit)
+  const MAX_RETRIES = 3
+  const INITIAL_DELAY_MS = 1000
 
-    // Xử lý trường hợp không có body (204 No Content)
-    if (response.status === 204) {
-      return { success: true } as APIResponse<T>
-    }
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, fetchInit)
 
-    const json = await response.json()
-
-    // Chuyển đổi snake_case → camelCase
-    const converted = rawResponse ? json : toCamelCase<APIResponse<T>>(json)
-
-    // Nếu HTTP lỗi hoặc success=false, throw để caller xử lý
-    if (!response.ok || !converted.success) {
-      const errorMessage = converted.error || converted.message || `HTTP ${response.status}`
-      
-      // Tự động clear session nếu token hết hạn (401)
-      if (response.status === 401) {
-        auth.clearSession()
-        if (typeof window !== 'undefined') {
-          window.location.href = '/login' // Chuyển hướng về trang login
-        }
+      // Xử lý trường hợp không có body (204 No Content)
+      if (response.status === 204) {
+        return { success: true } as APIResponse<T>
       }
-      
-      throw new APIError(errorMessage, response.status, response.headers)
-    }
 
-    return converted
-  } catch (error) {
-    // Log lỗi chi tiết để debug (đã ẩn theo yêu cầu người dùng)
-    
-    if (error instanceof APIError) throw error
-    
-    // Lỗi network (Fail to fetch)
-    throw new Error('Không thể kết nối đến server. Vui lòng kiểm tra backend đang chạy tại port 8080.')
+      const json = await response.json()
+
+      // Chuyển đổi snake_case → camelCase
+      const converted = rawResponse ? json : toCamelCase<APIResponse<T>>(json)
+
+      // Nếu HTTP lỗi hoặc success=false, throw để xử lý
+      if (!response.ok || !converted.success) {
+        const errorMessage = converted.error || converted.message || `HTTP ${response.status}`
+        
+        // Tự động clear session nếu token hết hạn (401)
+        if (response.status === 401) {
+          auth.clearSession()
+          if (typeof window !== 'undefined') {
+            window.location.href = '/login' // Chuyển hướng về trang login
+          }
+        }
+        
+        // Chỉ retry khi gặp lỗi tạm thời của Server (502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout)
+        const isTemporaryServerError = [502, 503, 504].includes(response.status)
+        if (isTemporaryServerError && attempt < MAX_RETRIES) {
+          const delay = INITIAL_DELAY_MS * Math.pow(2, attempt)
+          console.warn(`[API] Temporary error ${response.status}. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${MAX_RETRIES})`)
+          await sleep(delay)
+          continue // Tiếp tục thử lại ở vòng lặp sau
+        }
+
+        throw new APIError(errorMessage, response.status, response.headers)
+      }
+
+      return converted
+    } catch (error) {
+      // Nếu là APIError thông thường đã được throw từ trên, không retry tiếp (trừ phi đã handle ở block check status)
+      if (error instanceof APIError) {
+        throw error
+      }
+
+      // Xử lý lỗi đứt kết nối mạng (Network Error / Fail to fetch)
+      if (attempt < MAX_RETRIES) {
+        const delay = INITIAL_DELAY_MS * Math.pow(2, attempt)
+        console.warn(`[API] Network failure. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${MAX_RETRIES})`)
+        await sleep(delay)
+        continue // Thử lại kết nối
+      }
+
+      // Lỗi network cuối cùng
+      throw new Error('Không thể kết nối đến server. Vui lòng kiểm tra kết nối mạng của bạn hoặc backend đang chạy tại port 8080.')
+    }
   }
+
+  throw new Error('Đã xảy ra lỗi kết nối API không xác định.')
 }
 
 // ==========================================

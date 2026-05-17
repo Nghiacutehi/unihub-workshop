@@ -150,7 +150,7 @@ export default function AdminWorkshopsPage() {
                     </div>
                     <div className="text-center space-y-2">
                       <div className="font-bold text-slate-900 text-lg leading-tight">{reg.fullName || 'Sinh viên'}</div>
-                      <div className="text-sm font-mono text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full inline-block font-bold">
+                      <div className="text-sm font-mono text-primary bg-primary/10 px-3 py-1 rounded-full inline-block font-bold">
                         {reg.studentId}
                       </div>
                     </div>

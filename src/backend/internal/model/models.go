@@ -202,7 +202,8 @@ type LoginResponse struct {
 }
 
 type RegisterWorkshopRequest struct {
-	WorkshopID string `json:"workshop_id"`
+	WorkshopID    string `json:"workshop_id"`
+	CorrelationID string `json:"correlation_id,omitempty"`
 }
 
 type RegistrationStatusResponse struct {

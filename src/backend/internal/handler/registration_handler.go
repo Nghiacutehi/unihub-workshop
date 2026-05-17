@@ -50,7 +50,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// If status is QueueGranted or QueueAlreadyActive, proceed to register
 	// ==========================================
 
-	correlationID, err := h.regService.EnqueueRegistration(r.Context(), userID, req.WorkshopID)
+	correlationID, err := h.regService.EnqueueRegistration(r.Context(), userID, req.WorkshopID, req.CorrelationID)
 	if err != nil {
 		errorResponse(w, http.StatusConflict, err.Error())
 		return

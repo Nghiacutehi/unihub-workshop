@@ -48,8 +48,12 @@ type TicketPayload struct {
 	Signature  string `json:"sig"`
 }
 
-// SignTicket tạo chuỗi JSON đã ký RSA cho vé (4 trường)
+// SignTicket tạo chuỗi chữ ký số RSA (Base64) thô cho vé
 func (p *RSAProvider) SignTicket(studentID, userID, workshopID string) (string, error) {
+	if p.privateKey == nil {
+		return "", errors.New("RSA provider not initialized with private key")
+	}
+
 	// Chuỗi dữ liệu thô để ký: sid|uid|wid
 	rawData := fmt.Sprintf("%s|%s|%s", studentID, userID, workshopID)
 	hashed := sha256.Sum256([]byte(rawData))
@@ -60,13 +64,16 @@ func (p *RSAProvider) SignTicket(studentID, userID, workshopID string) (string, 
 	}
 
 	sigBase64 := base64.StdEncoding.EncodeToString(signature)
+	return sigBase64, nil
+}
 
-	// Tạo JSON hoàn chỉnh cho QR
+// GenerateQRData ghép thông tin vé và chữ ký số thành chuỗi JSON chuẩn để vẽ mã QR ở Client
+func GenerateQRData(studentID, userID, workshopID, signatureBase64 string) (string, error) {
 	payload := TicketPayload{
 		StudentID:  studentID,
 		UserID:     userID,
 		WorkshopID: workshopID,
-		Signature:  sigBase64,
+		Signature:  signatureBase64,
 	}
 
 	jsonBytes, err := json.Marshal(payload)

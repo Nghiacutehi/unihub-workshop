@@ -14,7 +14,7 @@ export default function LoginPage() {
         <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-8">
           {/* Logo & Branding */}
           <div className="flex flex-col items-center gap-4 mb-8">
-            <div className="flex items-center justify-center h-12 w-12 rounded-lg bg-gradient-to-br from-indigo-600 to-indigo-700">
+            <div className="flex items-center justify-center h-12 w-12 rounded-lg bg-primary shadow-lg shadow-primary/20">
               <span className="text-white font-bold text-lg">U</span>
             </div>
             <div className="text-center">
@@ -47,7 +47,7 @@ export default function LoginPage() {
           {/* Social Login Placeholder */}
           <p className="text-center text-xs text-slate-500">
             Cần hỗ trợ? Liên hệ{' '}
-            <a href="mailto:support@unihub.local" className="text-indigo-600 hover:underline font-medium">
+            <a href="mailto:support@unihub.local" className="text-primary hover:underline font-medium">
               support@unihub.local
             </a>
           </p>
