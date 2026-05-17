@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"golang.org/x/crypto/bcrypt"
 	"unihub-workshop/internal/middleware"
 	"unihub-workshop/internal/model"
 	"unihub-workshop/internal/repository"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthService struct {
@@ -25,13 +26,7 @@ func (s *AuthService) Login(ctx context.Context, req *model.LoginRequest) (*mode
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	// Thử so sánh bằng bcrypt trước
-	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
-	if err == nil {
-		// Khớp mã hóa bcrypt
-	} else if user.PasswordHash == req.Password {
-		// Khớp văn bản thô (Plaintext)
-	} else {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
