@@ -56,8 +56,16 @@ func NewRegistrationService(
 	}
 }
 
-// CheckWaitingRoom checks a user's status in the virtual waiting room
+// CheckWaitingRoom checks a user's status in the virtual waiting room.
+// It also performs "lazy promotion" — each poll triggers a batch of queued users
+// to be promoted into the active set, keeping the queue flowing.
 func (s *RegistrationService) CheckWaitingRoom(ctx context.Context, workshopID, userID string) (*ratelimiter.WaitingRoomResult, error) {
+	// Lazy promotion: promote waiting users before checking this user's status.
+	// This ensures the queue keeps moving even without a dedicated background worker.
+	if _, err := s.waitingRoom.PromoteNext(ctx, workshopID); err != nil {
+		log.Printf("[WAITING_ROOM] Promotion error (non-fatal): %v", err)
+	}
+
 	return s.waitingRoom.Enter(ctx, workshopID, userID)
 }
 
@@ -246,6 +254,11 @@ func (s *RegistrationService) ProcessRegistration(ctx context.Context, msg model
 	}
 
 	log.Printf("[WORKER] Registration finalized: id=%s status=%s", reg.ID, regStatus)
+
+	// Release waiting room slot so next queued user can be promoted
+	if err := s.waitingRoom.ReleaseAccess(ctx, msg.WorkshopID, msg.UserID); err != nil {
+		log.Printf("[WAITING_ROOM] Failed to release access (non-fatal): %v", err)
+	}
 
 	s.SetStatus(msg.CorrelationID, &model.RegistrationStatusResponse{
 		CorrelationID: msg.CorrelationID,

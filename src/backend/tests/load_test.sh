@@ -129,6 +129,13 @@ phase_loadtest() {
     
     mkdir -p "$RESULTS_DIR"
     
+    # Auto-reset: clean Redis + DB before each test
+    log_info "Resetting Redis & DB for clean test..."
+    docker exec unihub-redis redis-cli FLUSHALL > /dev/null 2>&1 || true
+    PGPASSWORD=unihub_secret psql -h localhost -p 5433 -U unihub -d unihub_workshop \
+        -c "DELETE FROM notifications; DELETE FROM payments; DELETE FROM registrations; UPDATE workshops SET available_seats = capacity;" > /dev/null 2>&1 || true
+    log_ok "Clean state ready"
+    
     # Get available workshops
     log_info "Fetching available workshops..."
     WORKSHOPS=$(curl -sf "${BASE_URL}/api/v1/workshops")
@@ -222,55 +229,125 @@ for w in workshops:
         exit 1
     fi
     
-    # ── Sub-phase 3b: Concurrent Registration ──
+    # ── Sub-phase 3b: Concurrent Registration with Waiting Room Retry ──
     log_info ""
-    log_info "── Phase 3b: Concurrent Registration Storm ──"
-    log_info "Sending ${LOGIN_SUCCESS} registration requests (concurrency: ${CONCURRENCY})..."
+    log_info "── Phase 3b: Registration Storm (with Waiting Room retry) ──"
+    log_info "Each student: POST → if 429 → poll waiting room → retry when GRANTED"
+    log_info "Concurrency: ${CONCURRENCY}, Timeout per student: 60s"
     
     REG_RESULTS="${RESULTS_DIR}/registration_results.txt"
     REG_LATENCIES="${RESULTS_DIR}/latencies.txt"
     > "$REG_RESULTS"
     > "$REG_LATENCIES"
     
-    REG_START=$(date +%s%N)
-    REG_COUNT=0
+    # Create standalone worker script (avoids set -e inheritance issues)
+    WORKER_SCRIPT="${RESULTS_DIR}/_worker.sh"
+    cat > "$WORKER_SCRIPT" << 'WORKER_EOF'
+#!/bin/bash
+# Worker: handles full registration lifecycle for one student
+# Args: $1=token $2=base_url $3=workshop_id $4=results_file $5=latencies_file
+TOKEN="$1"; BASE_URL="$2"; WORKSHOP_ID="$3"; RESULTS="$4"; LATENCIES="$5"
+MAX_ATTEMPTS=20; POLL_INTERVAL=3; ATTEMPT=0
+START_NS=$(date +%s%N)
+
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    ATTEMPT=$((ATTEMPT + 1))
     
-    while IFS= read -r token; do
-        (
-            START_NS=$(date +%s%N)
-            
-            HTTP_CODE=$(curl -s -o /tmp/reg_resp_$$.json -w "%{http_code}" \
-                -X POST "${BASE_URL}/api/v1/registrations" \
-                -H "Content-Type: application/json" \
-                -H "Authorization: Bearer $token" \
-                -d "{\"workshop_id\":\"${WORKSHOP_ID}\"}" \
-                --max-time 30 2>/dev/null || echo "000")
-            
+    RESP=$(curl -s -w "\n%{http_code}" \
+        -X POST "${BASE_URL}/api/v1/registrations" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d "{\"workshop_id\":\"${WORKSHOP_ID}\"}" \
+        --max-time 15 2>/dev/null || echo -e "\n000")
+    
+    CODE=$(echo "$RESP" | tail -1)
+    
+    case "$CODE" in
+        202|200)
             END_NS=$(date +%s%N)
-            LATENCY_MS=$(( (END_NS - START_NS) / 1000000 ))
-            
-            echo "${HTTP_CODE},${LATENCY_MS}" >> "$REG_RESULTS"
-            echo "$LATENCY_MS" >> "$REG_LATENCIES"
-            
-            rm -f /tmp/reg_resp_$$.json
-        ) &
-        
-        REG_COUNT=$((REG_COUNT + 1))
-        
-        # Throttle concurrency
-        if (( REG_COUNT % CONCURRENCY == 0 )); then
-            PROGRESS=$(( REG_COUNT * 100 / LOGIN_SUCCESS ))
-            printf "\r  🚀 Registration progress: %d%% [%d/%d]" "$PROGRESS" "$REG_COUNT" "$LOGIN_SUCCESS"
-            wait
-        fi
-    done < "$TOKEN_FILE"
-    wait
+            MS=$(( (END_NS - START_NS) / 1000000 ))
+            echo "${CODE},${MS}" >> "$RESULTS"
+            echo "$MS" >> "$LATENCIES"
+            exit 0
+            ;;
+        400|409)
+            END_NS=$(date +%s%N)
+            MS=$(( (END_NS - START_NS) / 1000000 ))
+            echo "400,${MS}" >> "$RESULTS"
+            echo "$MS" >> "$LATENCIES"
+            exit 0
+            ;;
+        429)
+            # Poll waiting room until GRANTED
+            while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                sleep $POLL_INTERVAL
+                ATTEMPT=$((ATTEMPT + 1))
+                
+                POLL=$(curl -s \
+                    "${BASE_URL}/api/v1/registrations/waiting-room/${WORKSHOP_ID}" \
+                    -H "Authorization: Bearer $TOKEN" \
+                    --max-time 10 2>/dev/null || echo "")
+                
+                STATUS=$(echo "$POLL" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('data',{}).get('status_text','UNKNOWN'))
+except:
+    print('ERROR')
+" 2>/dev/null || echo "ERROR")
+                
+                if [ "$STATUS" = "GRANTED" ] || [ "$STATUS" = "ALREADY_ACTIVE" ]; then
+                    break  # Retry registration
+                fi
+            done
+            ;;
+        *)
+            sleep 1
+            ;;
+    esac
+done
+
+# Timeout
+END_NS=$(date +%s%N)
+MS=$(( (END_NS - START_NS) / 1000000 ))
+echo "TIMEOUT,${MS}" >> "$RESULTS"
+echo "$MS" >> "$LATENCIES"
+exit 0
+WORKER_EOF
+    chmod +x "$WORKER_SCRIPT"
+    
+    REG_START=$(date +%s%N)
+    REG_TOTAL=$(wc -l < "$TOKEN_FILE")
+    
+    # Progress tracking in background
+    (
+        while true; do
+            sleep 2
+            DONE=$(wc -l < "$REG_RESULTS" 2>/dev/null || echo 0)
+            if [ "$DONE" -ge "$REG_TOTAL" ] 2>/dev/null; then break; fi
+            PCT=$((DONE * 100 / REG_TOTAL))
+            printf "\r  🚀 Registration progress: %d%% [%d/%d]" "$PCT" "$DONE" "$REG_TOTAL"
+        done
+    ) &
+    PROGRESS_PID=$!
+    
+    # Run workers using xargs for clean parallel execution
+    cat "$TOKEN_FILE" | xargs -P "$CONCURRENCY" -I {} \
+        bash "$WORKER_SCRIPT" {} "$BASE_URL" "$WORKSHOP_ID" "$REG_RESULTS" "$REG_LATENCIES"
+    
+    # Stop progress tracker
+    kill $PROGRESS_PID 2>/dev/null || true
+    wait $PROGRESS_PID 2>/dev/null || true
+    
+    # Cleanup worker script
+    rm -f "$WORKER_SCRIPT"
     
     REG_END=$(date +%s%N)
     REG_DURATION=$(( (REG_END - REG_START) / 1000000 ))
     
     printf "\r  🚀 Registration complete!                              \n"
-    log_ok "All ${REG_COUNT} requests sent in ${REG_DURATION}ms"
+    log_ok "All ${REG_TOTAL} requests processed in ${REG_DURATION}ms"
     
     # ── Generate report ──
     phase_report
@@ -322,7 +399,7 @@ print(f'│  HTTP 200 (OK):      {status_counts.get(\"200\", 0):>10}            
 print(f'│  HTTP 400 (Reject):  {status_counts.get(\"400\", 0):>10}                     │')
 print(f'│  HTTP 429 (Rate):    {status_counts.get(\"429\", 0):>10}                     │')
 print(f'│  HTTP 500 (Error):   {status_counts.get(\"500\", 0):>10}                     │')
-print(f'│  Timeout/Fail:       {status_counts.get(\"000\", 0):>10}                     │')
+print(f'│  Timeout/Fail:       {status_counts.get(\"000\", 0) + status_counts.get(\"TIMEOUT\", 0):>10}                     │')
 print('├─────────────────────────────────────────────────────┤')
 
 if latencies:
